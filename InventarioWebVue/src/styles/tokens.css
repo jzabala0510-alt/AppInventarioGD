@@ -1,0 +1,300 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap');
+
+/*
+  Paleta oficial de marca (FFFFFF / 86BB25 / 555652 / 202020), verificada por
+  contraste WCAG. El verde de marca puro no alcanza 4.5:1 como texto, por eso
+  --color-primary usa una variante mas oscura del mismo tono (mismo H/S, L menor).
+*/
+:root {
+  --color-brand-green: #86bb25;
+  --color-primary: #587b18;
+  --color-primary-hover: #4c6a15;
+  --color-graphite: #555652;
+  --color-gray-mid: #878786;
+  --color-gray-light: #ececec;
+
+  --bg-page: #f7f7f5;
+  --bg-surface: #ffffff;
+  --bg-surface-alt: var(--color-gray-light);
+  --bg-sidebar: #202020;
+
+  --text-primary: var(--color-graphite);
+  --text-secondary: #6e706a;
+  --text-on-primary: #ffffff;
+  --text-on-sidebar: #f2f2f0;
+  --text-on-sidebar-muted: #b9bab5;
+
+  --border: #dcdcd8;
+  --border-strong: #c4c4c0;
+
+  --color-danger: #a32d2d;
+  --color-danger-bg: #fcebeb;
+  --color-success: #3b6d11;
+  --color-success-bg: #eaf3de;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(20, 20, 18, 0.08);
+  --shadow-md: 0 4px 16px rgba(20, 20, 18, 0.12);
+
+  --font-sans: 'Fira Sans', system-ui, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, monospace;
+
+  --sidebar-width: 232px;
+  --topbar-height: 56px;
+}
+
+/*
+  El tema se decide en JS (src/stores/theme.js), que estampa data-theme en
+  <html> antes de montar la app -- no depende de prefers-color-scheme, para
+  que el interruptor manual mande siempre, sin importar el SO del usuario.
+*/
+:root[data-theme='dark'] {
+  --bg-page: #1c1f19;
+  --bg-surface: #23261f;
+  --bg-surface-alt: #2b2e26;
+  --bg-sidebar: #14150f;
+
+  --text-primary: #ececec;
+  --text-secondary: #a8aba3;
+  --text-on-primary: #14150f;
+
+  --border: #383b32;
+  --border-strong: #4a4d42;
+
+  --color-primary: #9fd635;
+  --color-primary-hover: #b0e04a;
+
+  --color-danger: #e57373;
+  --color-danger-bg: #3a2323;
+  --color-success: #9fd635;
+  --color-success-bg: #23301a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--color-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+}
+
+/* Componentes compartidos */
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 150ms, border-color 150ms;
+}
+
+.btn:hover {
+  background: var(--bg-surface-alt);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--text-on-primary);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.input,
+.select,
+.textarea {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.textarea {
+  height: auto;
+  padding: 10px 12px;
+  min-height: 80px;
+  resize: vertical;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(85, 120, 23, 0.15);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.badge-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+  text-align: left;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.data-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.data-table tbody tr:hover {
+  background: var(--bg-surface-alt);
+}
+
+.data-table tfoot td {
+  padding: 10px 12px;
+  font-weight: 600;
+  background: var(--bg-surface-alt);
+  position: sticky;
+  bottom: 0;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.page-header h1 {
+  font-size: 20px;
+}
+
+.empty-state {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 3rem 1rem;
+}

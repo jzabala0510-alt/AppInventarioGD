@@ -1,0 +1,23 @@
+{
+  "name": "backend-inventario",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend Node.js/Express — reemplazo de Reposiciones.war (Java/GlassFish), mismo contrato de API para InventarioWebApp",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mssql": "^11.0.1",
+    "qrcode": "^1.5.4"
+  }
+}
