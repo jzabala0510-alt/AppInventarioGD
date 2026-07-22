@@ -12,7 +12,6 @@ const auth = useAuthStore();
 
 const TODOS_LOS_ITEMS = [
   { name: 'inicio', label: 'Conteos', requiereSesion: true },
-  { name: 'conteo-nuevo', label: 'Nuevo conteo', requiereSesion: true },
   { name: 'configuracion', label: 'Configuración', requiereSesion: false },
   { name: 'actualizador', label: 'Actualizador', requiereSesion: true },
 ];

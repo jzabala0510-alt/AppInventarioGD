@@ -5,6 +5,7 @@ import * as conteosService from '../services/conteos';
 import { formatearFecha } from '../utils/fecha';
 import Spinner from '../components/Spinner.vue';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
+import NuevoConteoModal from '../components/NuevoConteoModal.vue';
 import Pagination from '../components/Pagination.vue';
 
 const router = useRouter();
@@ -13,6 +14,7 @@ const conteos = ref([]);
 const cargando = ref(true);
 const error = ref(null);
 const idAEliminar = ref(null);
+const modalNuevo = ref(false);
 
 const pagina = ref(1);
 const tamanoPagina = ref(25);
@@ -61,7 +63,7 @@ async function confirmarEliminar() {
       <h1>Conteos</h1>
       <div class="acciones">
         <button type="button" class="btn" @click="cargarConteos">Refrescar</button>
-        <RouterLink :to="{ name: 'conteo-nuevo' }" class="btn btn-primary">Nuevo conteo</RouterLink>
+        <button type="button" class="btn btn-primary" @click="modalNuevo = true">Nuevo conteo</button>
       </div>
     </div>
 
@@ -99,6 +101,12 @@ async function confirmarEliminar() {
       </table>
       <Pagination v-model:page="pagina" v-model:page-size="tamanoPagina" :total-items="conteos.length" />
     </div>
+
+    <NuevoConteoModal
+      :open="modalNuevo"
+      @creado="modalNuevo = false; cargarConteos()"
+      @cancelar="modalNuevo = false"
+    />
 
     <ConfirmDialog
       :open="idAEliminar !== null"
