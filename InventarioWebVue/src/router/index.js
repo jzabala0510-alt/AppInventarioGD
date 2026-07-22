@@ -33,6 +33,11 @@ const routes = [
         meta: { public: true },
       },
       {
+        path: 'actualizador',
+        name: 'actualizador',
+        component: () => import('../views/ActualizadorView.vue'),
+      },
+      {
         path: 'conteos/:id',
         name: 'conteo-detalle',
         component: () => import('../views/DetalleView.vue'),

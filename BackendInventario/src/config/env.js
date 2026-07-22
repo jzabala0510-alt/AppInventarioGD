@@ -30,4 +30,12 @@ export const config = {
     secret: Buffer.from(process.env.JWT_SECRET_BASE64, 'base64'),
     expiresIn: process.env.JWT_EXPIRES_IN || '8h',
   },
+  actualizador: {
+    // Sin clave configurada el modulo simplemente rechaza cualquier intento
+    // de actualizar (no crashea el arranque por esto).
+    clave: process.env.UPDATER_PASSWORD || null,
+    repoOwner: process.env.UPDATER_REPO_OWNER || null,
+    repoName: process.env.UPDATER_REPO_NAME || null,
+    rama: process.env.UPDATER_REPO_BRANCH || 'main',
+  },
 };

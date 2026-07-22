@@ -8,6 +8,7 @@ import { conteoRouter } from './conteo.js';
 import { sqlRouter } from './sql.js';
 import { ordenRouter } from './orden.js';
 import { utilRouter } from './util.js';
+import { actualizadorRouter } from './actualizador.js';
 
 export const router = Router();
 
@@ -20,3 +21,4 @@ router.use(conteoRouter);
 router.use(sqlRouter);
 router.use(ordenRouter);
 router.use(utilRouter);
+router.use(actualizadorRouter);
