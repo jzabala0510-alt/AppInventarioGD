@@ -61,7 +61,6 @@ const formularioBD = ref({
   ip: '',
   puerto: 1433,
   instanciaSQL: 'MSSQLSERVER',
-  usuario: '',
   pass: '',
 });
 const passwords = ref([]);
@@ -82,7 +81,6 @@ onMounted(async () => {
       ip: actual.ip || '',
       puerto: actual.puerto || 1433,
       instanciaSQL: actual.instanciaSQL || 'MSSQLSERVER',
-      usuario: actual.usuario || '',
       pass: actual.pass || '',
     };
   } catch {
@@ -226,11 +224,6 @@ async function guardarBD() {
       <div class="field">
         <label for="bdInstancia">Instancia SQL</label>
         <input id="bdInstancia" v-model="formularioBD.instanciaSQL" type="text" class="input" required />
-      </div>
-
-      <div class="field">
-        <label for="bdUsuario">Usuario SQL Server</label>
-        <input id="bdUsuario" v-model="formularioBD.usuario" type="text" class="input" required />
       </div>
 
       <div class="field">

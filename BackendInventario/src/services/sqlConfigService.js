@@ -33,14 +33,13 @@ export async function obtenerPasswords() {
 // para conectar de verdad. A diferencia del original (donde el usuario de SQL
 // Server no era editable desde esta pantalla), aca si se acepta -- una
 // instalacion nueva no tiene ningun usuario previo guardado para reusar.
-function aParametrosConexion({ ip, puerto, instanciaSQL, pass, usuario }) {
-  const activa = getConexionActiva();
+function aParametrosConexion({ ip, puerto, instanciaSQL, pass }) {
   return {
     host: ip,
     port: Number(puerto),
     database: 'ICGAdmin',
     instance: instanciaSQL,
-    user: usuario || activa.user,
+    user: 'ICGAdmin',
     password: desEncriptar(pass || ''),
   };
 }
