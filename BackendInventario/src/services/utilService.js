@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 // data URI generado en memoria -- el <img src=...> del frontend acepta ambos
 // por igual, y asi no hay que gestionar un archivo generado dinamicamente.
 export async function obtenerApk(baseUrl) {
-  const url = `${baseUrl}/descargas/docs/Almacenes%20APP.apk`;
+  const url = `${baseUrl}/descargas/`;
   const qr = await QRCode.toDataURL(url);
   return { url, qr, urlWS: baseUrl };
 }
