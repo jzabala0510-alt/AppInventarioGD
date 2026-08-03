@@ -167,12 +167,15 @@ async function handleExportarExcel(req, res, next) {
   try {
     const { id } = req.params;
     const { zona, sector, usuario, total, diferencias, concepto } = req.query;
+    // Los params de query llegan como strings; "false" es truthy, hay que convertir
+    // explicitamente a booleano comparando contra el literal "true".
+    const toFlag = (v) => v === 'true';
     const buffer = await generarExcelDiferencias(Number(id), {
       zona,
       sector,
       codUsuario: usuario,
-      esConteoTotal: total,
-      mostrarSoloDiferencias: diferencias,
+      esConteoTotal: toFlag(total),
+      mostrarSoloDiferencias: toFlag(diferencias),
       codConcepto: concepto,
     });
     res.set('Content-Type', 'application/vnd.ms-excel');
