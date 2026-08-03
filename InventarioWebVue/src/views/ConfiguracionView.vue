@@ -60,6 +60,7 @@ async function copiarUrl() {
 const formularioBD = ref({
   ip: '',
   puerto: 1433,
+  bd: '',
   instanciaSQL: 'MSSQLSERVER',
   pass: '',
 });
@@ -80,6 +81,7 @@ onMounted(async () => {
     formularioBD.value = {
       ip: actual.ip || '',
       puerto: actual.puerto || 1433,
+      bd: actual.bd || '',
       instanciaSQL: actual.instanciaSQL || 'MSSQLSERVER',
       pass: actual.pass || '',
     };
@@ -221,9 +223,15 @@ async function guardarBD() {
         </div>
       </div>
 
-      <div class="field">
-        <label for="bdInstancia">Instancia SQL</label>
-        <input id="bdInstancia" v-model="formularioBD.instanciaSQL" type="text" class="input" required />
+      <div class="fila-bd">
+        <div class="field">
+          <label for="bdNombre">Base de datos</label>
+          <input id="bdNombre" v-model="formularioBD.bd" type="text" class="input" required />
+        </div>
+        <div class="field">
+          <label for="bdInstancia">Instancia SQL</label>
+          <input id="bdInstancia" v-model="formularioBD.instanciaSQL" type="text" class="input" required />
+        </div>
       </div>
 
       <div class="field">
