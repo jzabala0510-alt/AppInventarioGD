@@ -206,7 +206,7 @@ conteoRouter.post('/conteo/agregarArticuloBatch', async (req, res, next) => {
 
 // El original consume esto como text/plain (el body es directamente el string
 // base64-gzip, no un objeto JSON) -- se usa express.text() solo en esta ruta.
-conteoRouter.post('/conteo/agregarArticuloBatchComprimido', express.text({ type: '*/*' }), async (req, res, next) => {
+conteoRouter.post('/conteo/agregarArticuloBatchComprimido', express.text({ type: '/', limit: '50mb' }), async (req, res, next) => {
   try {
     res.json(await conteoBatchService.agregarArticuloBatchComprimido(req.body));
   } catch (err) {
