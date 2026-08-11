@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import * as conteosService from '../services/conteos';
+import { api } from '../services/api';
 import { formatearFecha } from '../utils/fecha';
 import Spinner from '../components/Spinner.vue';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
@@ -15,6 +16,7 @@ const cargando = ref(true);
 const error = ref(null);
 const idAEliminar = ref(null);
 const modalNuevo = ref(false);
+const alertaMermas = ref([]);
 
 const pagina = ref(1);
 const tamanoPagina = ref(25);
@@ -37,7 +39,17 @@ async function cargarConteos() {
   }
 }
 
-onMounted(cargarConteos);
+async function cargarAlertaMermas() {
+  try {
+    const { data } = await api.get('/util/alertas-mermas');
+    alertaMermas.value = data;
+  } catch { /* sin BD: ignorar */ }
+}
+
+onMounted(() => {
+  cargarConteos();
+  cargarAlertaMermas();
+});
 
 function verDetalle(idConteo) {
   router.push({ name: 'conteo-detalle', params: { id: idConteo } });
@@ -65,6 +77,17 @@ async function confirmarEliminar() {
         <button type="button" class="btn" @click="cargarConteos">Refrescar</button>
         <button type="button" class="btn btn-primary" @click="modalNuevo = true">Nuevo conteo</button>
       </div>
+    </div>
+
+    <div v-if="alertaMermas.length" class="alerta-mermas">
+      <span class="alerta-mermas__icono">⚠</span>
+      <div class="alerta-mermas__cuerpo">
+        <strong>Stock en almacén de mermas</strong>
+        <span v-for="a in alertaMermas" :key="a.codAlmacen">
+          {{ a.nombre }}: {{ a.totalStock.toLocaleString('es-VE') }} unidades
+        </span>
+      </div>
+      <button type="button" class="alerta-mermas__cerrar" @click="alertaMermas = []">✕</button>
     </div>
 
     <p v-if="error" class="login-error">{{ error }}</p>
@@ -138,5 +161,50 @@ async function confirmarEliminar() {
   display: flex;
   gap: 4px;
   white-space: nowrap;
+}
+
+.alerta-mermas {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 50%, transparent);
+  border-radius: var(--radius);
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.alerta-mermas__icono {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.alerta-mermas__cuerpo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.alerta-mermas__cuerpo strong {
+  color: var(--color-warning, #b45309);
+}
+
+.alerta-mermas__cerrar {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 0 0.25rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.alerta-mermas__cerrar:hover {
+  color: var(--text-primary);
 }
 </style>

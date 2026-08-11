@@ -322,7 +322,7 @@ export async function getResumenEnvios(idConteo) {
       FROM rip.CONTEO_ENVIOS CE WITH(NOLOCK)
       LEFT JOIN VENDEDORES V WITH(NOLOCK) ON CE.CODUSUARIO = V.CODVENDEDOR
       WHERE CE.IDCONTEO = @idConteo
-      ORDER BY CE.HORAPROCESADO DESC
+      ORDER BY CE.HORAGENERADO DESC
     `);
   return result.recordset.map((r) => ({
     idEnvio: r.ID,

@@ -5,7 +5,7 @@ import { obtenerIpLocal } from '../utils/redLocal.js';
 import { getPool, sql } from '../db/pool.js';
 
 export const utilRouter = Router();
-
+ 
 utilRouter.get('/util/getApk', async (req, res, next) => {
   try {
     // La IP se calcula desde la red de esta maquina, NO desde como el
@@ -19,20 +19,18 @@ utilRouter.get('/util/getApk', async (req, res, next) => {
   }
 });
 
-// Devuelve los almacenes de mermas que tienen stock > 0 segun el ultimo
-// snapshot de conteo (rip.CONTEOSTOCK). Se usa CONTEOSTOCK en vez de STOCKS
-// porque en este cliente los items de mermas no se trasladan formalmente en ICG,
-// por lo que STOCKS para el almacen de mermas siempre esta vacio.
+// Devuelve los almacenes de mermas que tienen stock neto > 0 segun STOCKS (ICG live).
 utilRouter.get('/util/alertas-mermas', async (req, res, next) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(`
-      SELECT A.CODALMACEN, A.NOMBREALMACEN, SUM(CS.STOCK) AS TOTALSTOCK
-      FROM rip.CONTEOSTOCK CS WITH(NOLOCK)
-      INNER JOIN ALMACEN A WITH(NOLOCK) ON CS.CODALMACEN = A.CODALMACEN
+      SELECT A.CODALMACEN, A.NOMBREALMACEN,
+             SUM(CASE WHEN S.STOCK > 0 THEN S.STOCK ELSE 0 END) AS TOTALSTOCK
+      FROM STOCKS S WITH(NOLOCK)
+      INNER JOIN ALMACEN A WITH(NOLOCK) ON S.CODALMACEN = A.CODALMACEN
       WHERE A.ESMERMAS = 1
       GROUP BY A.CODALMACEN, A.NOMBREALMACEN
-      HAVING SUM(CS.STOCK) > 0
+      HAVING SUM(CASE WHEN S.STOCK > 0 THEN S.STOCK ELSE 0 END) > 0
     `);
     res.json(result.recordset.map((r) => ({
       codAlmacen: r.CODALMACEN,

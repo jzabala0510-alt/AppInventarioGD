@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { listarVendedores, login as loginVendedor } from '../services/vendedores';
-import { api } from '../services/api';
 import AppLogo from '../components/AppLogo.vue';
 import Spinner from '../components/Spinner.vue';
 import SearchableSelect from '../components/SearchableSelect.vue';
@@ -21,7 +20,6 @@ const codVendedor = ref('');
 const password = ref('');
 const errorLogin = ref(null);
 const enviando = ref(false);
-const alertaMermas = ref([]);  // almacenes de mermas con stock > 0
 
 onMounted(async () => {
   try {
@@ -52,14 +50,6 @@ async function handleSubmit() {
       codVendedor: Number(codVendedor.value),
       nombreVendedor: vendedor?.nombreVendedor ?? '',
     });
-    // Verificar mermas antes de redirigir -- error silencioso para no bloquear el login.
-    try {
-      const { data } = await api.get('/util/alertas-mermas');
-      if (data.length > 0) {
-        alertaMermas.value = data;
-        return; // queda en la pantalla de login mostrando la alerta
-      }
-    } catch { /* sin BD o error: ignorar */ }
     router.push({ name: 'inicio' });
   } catch {
     errorLogin.value = 'No se pudo conectar con el servidor';
@@ -100,27 +90,14 @@ async function handleSubmit() {
 
         <p v-if="errorLogin" class="login-error">{{ errorLogin }}</p>
 
-        <!-- Alerta de mermas: se muestra si hay stock en almacenes de mermas -->
-        <div v-if="alertaMermas.length" class="alerta-mermas">
-          <p class="alerta-mermas__titulo">⚠ Atención — Stock en almacén de mermas</p>
-          <p v-for="a in alertaMermas" :key="a.codAlmacen" class="alerta-mermas__linea">
-            {{ a.nombre }}: <strong>{{ a.totalStock.toLocaleString('es-VE') }}</strong> unidades
-          </p>
-          <button type="button" class="btn btn-primary" @click="router.push({ name: 'inicio' })">
-            Entendido, continuar
-          </button>
-        </div>
+        <button type="submit" class="btn btn-primary" :disabled="enviando">
+          <Spinner v-if="enviando" :size="16" />
+          <span>{{ enviando ? 'Ingresando…' : 'Iniciar sesión' }}</span>
+        </button>
 
-        <template v-else>
-          <button type="submit" class="btn btn-primary" :disabled="enviando">
-            <Spinner v-if="enviando" :size="16" />
-            <span>{{ enviando ? 'Ingresando…' : 'Iniciar sesión' }}</span>
-          </button>
-
-          <RouterLink :to="{ name: 'configuracion' }" class="enlace-configuracion">
-            ¿No puedes conectar? Configurar servidor
-          </RouterLink>
-        </template>
+        <RouterLink :to="{ name: 'configuracion' }" class="enlace-configuracion">
+          ¿No puedes conectar? Configurar servidor
+        </RouterLink>
       </form>
     </section>
   </div>
@@ -186,28 +163,6 @@ async function handleSubmit() {
   font-size: 13px;
 }
 
-.alerta-mermas {
-  background: color-mix(in srgb, var(--color-warning, #f59e0b) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 50%, transparent);
-  border-radius: var(--radius);
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.alerta-mermas__titulo {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--color-warning, #b45309);
-  margin: 0;
-}
-
-.alerta-mermas__linea {
-  font-size: 13px;
-  margin: 0;
-  color: var(--text-primary);
-}
 
 @media (max-width: 720px) {
   .login-page {

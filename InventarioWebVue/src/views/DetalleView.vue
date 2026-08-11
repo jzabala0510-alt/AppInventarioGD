@@ -308,6 +308,7 @@ const urlExportar = computed(() =>
             <table class="data-table">
               <thead>
                 <tr>
+                  <th>#</th>
                   <th>Usuario</th>
                   <th>Fecha</th>
                   <th>Unidades</th>
@@ -316,7 +317,8 @@ const urlExportar = computed(() =>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="e in resumenEnvios" :key="e.idEnvio">
+                <tr v-for="(e, ind) in resumenEnvios" :key="e.idEnvio">
+                  <td>{{ resumenEnvios.length - ind }}</td>
                   <td>{{ e.usuario }}</td>
                   <td>{{ e.horaGenerado }}</td>
                   <td>{{ e.unidades }}</td>
@@ -326,7 +328,7 @@ const urlExportar = computed(() =>
               </tbody>
               <tfoot>
                 <tr>
-                  <td colspan="2">Total:</td>
+                  <td colspan="3">Total:</td>
                   <td>{{ totalUnidadesEnvios }}</td>
                   <td></td>
                   <td></td>

@@ -17,8 +17,14 @@ function llenarHojaDetalle(sheet, rows) {
   // aca explicitamente, si no las celdas quedarian vacias en vez de en 0.
   const num = (v) => v ?? 0;
 
-  // Cabecera de la columna AC (Stock Mermas) -- la plantilla no la tiene.
-  sheet.getRow(1).getCell('AC').value = 'Stock Mermas';
+  // Stock Mermas se inserta en V (junto a Stock=U); la plantilla tenia Vendidas
+  // en V, se sobreescriben cabeceras de V en adelante para que coincidan con datos.
+  const hdr = sheet.getRow(1);
+  hdr.getCell('V').value = 'Stock Mermas';
+  hdr.getCell('W').value = 'Vendidas';
+  hdr.getCell('X').value = 'Diferencia';
+  hdr.getCell('Y').value = 'Costo Ven.';
+  hdr.getCell('Z').value = 'Costo Dif.';
 
   rows.forEach((r, i) => {
     const excelRow = i + 2;
@@ -27,7 +33,7 @@ function llenarHojaDetalle(sheet, rows) {
     row.getCell('B').value = r.SECCION;
     row.getCell('C').value = r.FAMILIA;
     row.getCell('D').value = r.SUBFAMILIA;
-    row.getCell('E').value = r.MARCA;          // Marca real (el original tenia un bug de copy-paste que escribia ZONA_6 aqui)
+    row.getCell('E').value = r.MARCA;
     row.getCell('F').value = num(r.CODARTICULO);
     row.getCell('G').value = r.REFPROVEEDOR;
     row.getCell('H').value = r.DESCRIPCION;
@@ -40,23 +46,24 @@ function llenarHojaDetalle(sheet, rows) {
     row.getCell('O').value = num(r.ZONA_3);
     row.getCell('P').value = num(r.ZONA_4);
     row.getCell('Q').value = num(r.ZONA_5);
-    row.getCell('R').value = num(r.ZONA_6);    // Dotacion (el original lo escribia en E por error)
+    row.getCell('R').value = num(r.ZONA_6);    // Dotacion
     row.getCell('S').value = num(r.ZONA_7);
     row.getCell('T').value = num(r.CONTADO);
     row.getCell('U').value = num(r.STOCK);
-    row.getCell('V').value = num(r.VENDIDAS);
-    row.getCell('W').value = num(r.DIFERENCIA);
-    row.getCell('X').value = num(r.COSTOVEN);
-    row.getCell('Y').value = num(r.COSTOVEN_DIFERENCIA);
-    row.getCell('Z').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow} + V${excelRow}) & "|0|0|0||"` };
-    row.getCell('AA').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow}) & "|0|0|0||"` };
-    row.getCell('AB').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (U${excelRow} - T${excelRow} - V${excelRow}) & "|0|0|0||"` };
-    row.getCell('AC').value = num(r.STOCKMERMAS);
+    row.getCell('V').value = num(r.STOCKMERMAS); // Stock Mermas — referencial, sin total
+    row.getCell('W').value = num(r.VENDIDAS);    // era V
+    row.getCell('X').value = num(r.DIFERENCIA);  // era W
+    row.getCell('Y').value = num(r.COSTOVEN);    // era X
+    row.getCell('Z').value = num(r.COSTOVEN_DIFERENCIA); // era Y
+    row.getCell('AA').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow} + W${excelRow}) & "|0|0|0||"` }; // era Z, W=Vendidas
+    row.getCell('AB').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow}) & "|0|0|0||"` }; // era AA
+    row.getCell('AC').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (U${excelRow} - T${excelRow} - W${excelRow}) & "|0|0|0||"` }; // era AB, W=Vendidas
   });
 
   const lastDataRow = rows.length + 1; // fila Excel de la ultima fila con datos
   const totalsRow = sheet.getRow(rows.length + 2);
-  const totalCols = ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'AC'];
+  // V=StockMermas (referencial, sin total); W=Vendidas, X=Diferencia, Z=CostoDif
+  const totalCols = ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'W', 'X', 'Z'];
   for (const col of totalCols) {
     const cell = totalsRow.getCell(col);
     cell.value = { formula: `SUM(${col}2:${col}${lastDataRow})` };
