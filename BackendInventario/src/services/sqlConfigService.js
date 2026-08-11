@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPool, getConexionActiva, probarConexionCon, reconfigurarPool } from '../db/pool.js';
 import { encriptar, desEncriptar } from '../utils/normalkeyConexion.js';
+import { log } from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ARCHIVO_PASSWORDS = path.join(__dirname, '../resources/passbd.json');
@@ -63,8 +64,10 @@ export async function guardarDatosConexion(datos) {
   let script;
   try {
     script = await ejecutarScript();
+    log('Script de BD ejecutado correctamente al guardar conexion');
   } catch (err) {
     script = { success: false, respuesta: String(err.message || err) };
+    log(`Error ejecutando script al guardar conexion: ${err.message || err}`);
   }
 
   return { ...(await obtenerDatosConexion()), script };
