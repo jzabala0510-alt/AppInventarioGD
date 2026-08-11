@@ -19,18 +19,20 @@ utilRouter.get('/util/getApk', async (req, res, next) => {
   }
 });
 
-// Devuelve los almacenes de mermas que tienen stock > 0.
-// El frontend lo llama al iniciar sesion para mostrar una advertencia.
+// Devuelve los almacenes de mermas que tienen stock > 0 segun el ultimo
+// snapshot de conteo (rip.CONTEOSTOCK). Se usa CONTEOSTOCK en vez de STOCKS
+// porque en este cliente los items de mermas no se trasladan formalmente en ICG,
+// por lo que STOCKS para el almacen de mermas siempre esta vacio.
 utilRouter.get('/util/alertas-mermas', async (req, res, next) => {
   try {
     const pool = await getPool();
     const result = await pool.request().query(`
-      SELECT A.CODALMACEN, A.NOMBREALMACEN, SUM(S.STOCK) AS TOTALSTOCK
-      FROM STOCKS S WITH(NOLOCK)
-      INNER JOIN ALMACEN A WITH(NOLOCK) ON S.CODALMACEN = A.CODALMACEN
+      SELECT A.CODALMACEN, A.NOMBREALMACEN, SUM(CS.STOCK) AS TOTALSTOCK
+      FROM rip.CONTEOSTOCK CS WITH(NOLOCK)
+      INNER JOIN ALMACEN A WITH(NOLOCK) ON CS.CODALMACEN = A.CODALMACEN
       WHERE A.ESMERMAS = 1
       GROUP BY A.CODALMACEN, A.NOMBREALMACEN
-      HAVING SUM(S.STOCK) > 0
+      HAVING SUM(CS.STOCK) > 0
     `);
     res.json(result.recordset.map((r) => ({
       codAlmacen: r.CODALMACEN,
