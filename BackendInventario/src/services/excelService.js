@@ -17,6 +17,9 @@ function llenarHojaDetalle(sheet, rows) {
   // aca explicitamente, si no las celdas quedarian vacias en vez de en 0.
   const num = (v) => v ?? 0;
 
+  // Cabecera de la columna AC (Stock Mermas) -- la plantilla no la tiene.
+  sheet.getRow(1).getCell('AC').value = 'Stock Mermas';
+
   rows.forEach((r, i) => {
     const excelRow = i + 2;
     const row = sheet.getRow(excelRow);
@@ -24,7 +27,7 @@ function llenarHojaDetalle(sheet, rows) {
     row.getCell('B').value = r.SECCION;
     row.getCell('C').value = r.FAMILIA;
     row.getCell('D').value = r.SUBFAMILIA;
-    row.getCell('E').value = num(r.ZONA_6); // bug preservado a proposito
+    row.getCell('E').value = r.MARCA;          // Marca real (el original tenia un bug de copy-paste que escribia ZONA_6 aqui)
     row.getCell('F').value = num(r.CODARTICULO);
     row.getCell('G').value = r.REFPROVEEDOR;
     row.getCell('H').value = r.DESCRIPCION;
@@ -37,7 +40,7 @@ function llenarHojaDetalle(sheet, rows) {
     row.getCell('O').value = num(r.ZONA_3);
     row.getCell('P').value = num(r.ZONA_4);
     row.getCell('Q').value = num(r.ZONA_5);
-    // R ("Dotacion") nunca se escribe -- mismo bug que el original.
+    row.getCell('R').value = num(r.ZONA_6);    // Dotacion (el original lo escribia en E por error)
     row.getCell('S').value = num(r.ZONA_7);
     row.getCell('T').value = num(r.CONTADO);
     row.getCell('U').value = num(r.STOCK);
@@ -48,11 +51,12 @@ function llenarHojaDetalle(sheet, rows) {
     row.getCell('Z').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow} + V${excelRow}) & "|0|0|0||"` };
     row.getCell('AA').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (T${excelRow}) & "|0|0|0||"` };
     row.getCell('AB').value = { formula: `"1|" & F${excelRow} & "|" & J${excelRow} & "|" & I${excelRow} & "|" & (U${excelRow} - T${excelRow} - V${excelRow}) & "|0|0|0||"` };
+    row.getCell('AC').value = num(r.STOCKMERMAS);
   });
 
   const lastDataRow = rows.length + 1; // fila Excel de la ultima fila con datos
   const totalsRow = sheet.getRow(rows.length + 2);
-  const totalCols = ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y'];
+  const totalCols = ['M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'AC'];
   for (const col of totalCols) {
     const cell = totalsRow.getCell(col);
     cell.value = { formula: `SUM(${col}2:${col}${lastDataRow})` };
