@@ -45,21 +45,58 @@ export async function obtenerEstado() {
   }
 }
 
+// "fetch failed" es el mensaje generico que usa undici para CUALQUIER error
+// de red (timeout, reset de conexion, DNS, TLS); la causa real viaja en
+// err.cause y antes se perdia. La combinamos en un solo mensaje para que
+// quede algo util en backend.log.
+function describirErrorFetch(err) {
+  const causa = err.cause ? `${err.cause.code || err.cause.message || err.cause}` : null;
+  return causa ? `${err.message} (${causa})` : err.message;
+}
+
+// GitHub (api.github.com y codeload.github.com) a veces corta la conexion de
+// forma transitoria. Un solo intento fallido no deberia tumbar la
+// actualizacion completa, asi que reintentamos con backoff antes de rendirnos.
+async function conReintentos(fn, { intentos = 3, esperaMs = 1500 } = {}) {
+  let ultimoError;
+  for (let intento = 1; intento <= intentos; intento++) {
+    try {
+      return await fn();
+    } catch (err) {
+      ultimoError = err;
+      log(`Intento ${intento}/${intentos} fallo: ${describirErrorFetch(err)}`);
+      if (intento < intentos) await new Promise((r) => setTimeout(r, esperaMs * intento));
+    }
+  }
+  throw new Error(describirErrorFetch(ultimoError));
+}
+
 async function obtenerUltimoCommit() {
   const { repoOwner, repoName, rama } = config.actualizador;
-  const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`);
-  if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
-  const datos = await resp.json();
-  return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
+  return conReintentos(async () => {
+    const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
+    const datos = await resp.json();
+    return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
+  });
 }
 
 async function descargarZip(destino) {
   const { repoOwner, repoName, rama } = config.actualizador;
-  const url = `https://github.com/${repoOwner}/${repoName}/archive/refs/heads/${rama}.zip`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  await fsp.writeFile(destino, buffer);
+  // Se pide directo a codeload.github.com en vez de a
+  // github.com/.../archive/....zip (que redirige ahi mismo). En algunas
+  // redes el redirect github.com -> codeload.github.com se corta a mitad de
+  // camino cuando lo sigue fetch de Node (UND_ERR_SOCKET, 0 bytes leidos)
+  // aunque el navegador y una descarga directa a codeload funcionen bien.
+  const url = `https://codeload.github.com/${repoOwner}/${repoName}/zip/refs/heads/${rama}`;
+  await conReintentos(async () => {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
+    if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    await fsp.writeFile(destino, buffer);
+  });
 }
 
 function esRutaProtegida(rutaRelativa) {
@@ -88,6 +125,42 @@ async function copiarSobreescribiendo(origen, destino, prefijoRelativo = '') {
 function ejecutar(comando, args, cwd) {
   log(`Ejecutando: ${comando} ${args.join(' ')} (en ${cwd})`);
   execFileSync(comando, args, { cwd, stdio: 'pipe', shell: true });
+}
+
+// Instala dependencias en un directorio de staging mientras el node_modules
+// original permanece intacto (el servidor puede reiniciarse en cualquier
+// momento y seguira encontrando sus modulos). Solo al terminar la instalacion
+// se hace el swap: dos renames rapidos. Si la instalacion falla, el staging
+// se elimina y el original no se toco.
+async function instalarConRespaldo(dirProyecto, argsInstall) {
+  const modulos = path.join(dirProyecto, 'node_modules');
+  const staging = path.join(dirProyecto, 'node_modules.staging');
+  const respaldo = path.join(dirProyecto, 'node_modules.bak');
+
+  // Limpiar artefactos de intentos anteriores
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.rm(respaldo, { recursive: true, force: true });
+
+  try {
+    // npm install --prefix <staging> necesita package.json en ese directorio
+    await fsp.mkdir(staging, { recursive: true });
+    await fsp.copyFile(path.join(dirProyecto, 'package.json'), path.join(staging, 'package.json'));
+
+    log(`Instalando dependencias de ${path.basename(dirProyecto)} en staging...`);
+    ejecutar('npm', [...argsInstall, '--prefix', staging], dirProyecto);
+
+    // Swap atomico: el node_modules original estuvo intacto durante toda la instalacion
+    if (fs.existsSync(modulos)) await fsp.rename(modulos, respaldo);
+    await fsp.rename(path.join(staging, 'node_modules'), modulos);
+
+    // Limpieza asincrona — no bloquea el flujo de actualizacion
+    fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+    fsp.rm(respaldo, { recursive: true, force: true }).catch(() => {});
+  } catch (err) {
+    log(`Instalacion fallida en ${path.basename(dirProyecto)}, node_modules original intacto`);
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 // Devuelve el resultado del intento; si tiene exito, el caller es responsable
@@ -130,10 +203,14 @@ export async function aplicarActualizacion() {
     await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
 
     log('Instalando dependencias del backend...');
-    ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
+    await instalarConRespaldo(DIR_BACKEND, ['install', '--omit=dev']);
 
-    log('Instalando dependencias y compilando el frontend...');
-    ejecutar('npm', ['install'], DIR_FRONTEND);
+    // --include=dev garantiza que las devDependencies (vite, @vitejs/plugin-vue,
+    // etc.) se instalen aunque NODE_ENV=production este activo en el entorno.
+    log('Instalando dependencias del frontend...');
+    await instalarConRespaldo(DIR_FRONTEND, ['install', '--include=dev']);
+
+    log('Compilando el frontend...');
     ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
 
     await fsp.mkdir(path.dirname(ARCHIVO_VERSION), { recursive: true });
