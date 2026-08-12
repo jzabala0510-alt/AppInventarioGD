@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import * as actualizadorService from '../services/actualizadorService.js';
-import { log } from '../utils/logger.js';
 
 export const actualizadorRouter = Router();
 
@@ -20,23 +19,18 @@ actualizadorRouter.post('/actualizador/actualizar', async (req, res) => {
     return res.status(401).json({ success: false, respuesta: 'Clave incorrecta' });
   }
 
-  // Responder de inmediato antes de iniciar la actualizacion.
-  // node --watch reinicia el proceso cuando detecta los archivos nuevos
-  // copiados del ZIP -- si esperamos a que termine nunca hay tiempo de
-  // responder. El cliente entra en polling (/_health) y espera a que el
-  // servidor vuelva con el codigo nuevo.
-  res.json({ success: true, respuesta: 'Actualización iniciada. El servidor se reiniciará en unos momentos…' });
-
-  setTimeout(async () => {
-    try {
-      await actualizadorService.aplicarActualizacion();
-      log('Actualizacion completada, reiniciando proceso...');
-    } catch (err) {
-      log(`Actualizacion fallida: ${err.message || err}`);
-    }
-    // Salir siempre: en exito carga el codigo nuevo; en fallo el staging
-    // preservo el node_modules anterior y NSSM/--watch levanta el proceso
-    // con la version que estaba funcionando.
-    process.exit(0);
-  }, 200);
+  try {
+    const commit = await actualizadorService.aplicarActualizacion();
+    res.json({
+      success: true,
+      respuesta: `Actualizado a "${commit.mensaje}". Reiniciando...`,
+      commit: commit.sha,
+    });
+    // El proceso se reinicia DESPUES de que la respuesta salio -- NSSM lo
+    // vuelve a levantar solo (AppExit configurado en Restart), ya con el
+    // codigo nuevo. Sin esto, seguiria corriendo la version vieja en memoria.
+    setTimeout(() => process.exit(0), 500);
+  } catch (err) {
+    res.status(500).json({ success: false, respuesta: err.message || 'No se pudo actualizar' });
+  }
 });

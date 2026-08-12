@@ -17,19 +17,16 @@ const DIR_BACKEND = path.join(RAIZ_PROYECTO, 'BackendInventario');
 const DIR_FRONTEND = path.join(RAIZ_PROYECTO, 'InventarioWebVue');
 const ARCHIVO_VERSION = path.join(__dirname, '../../logs/version.json');
 
-// Lo que nunca viene del zip descargado, aunque el repo lo incluyera:
-// configuracion local, secretos y estado propio de esta instalacion. Se
-// preservan copiando la version en vivo hacia la copia staged justo antes
-// del swap final (node_modules NO va aca: la copia staged ya trae uno
-// recien instalado, y ese es el que debe quedar).
-const RUTAS_PROTEGIDAS = ['.env', '.env.local', 'logs', 'src/data', 'src/resources/passbd.json'];
-
-// Staging DENTRO de la raiz del proyecto (mismo disco que DIR_BACKEND /
-// DIR_FRONTEND): el swap final es un rename, y eso solo es instantaneo
-// dentro del mismo volumen. os.tmpdir() puede estar en otro disco segun el
-// sistema, asi que solo se usa para bajar/extraer el zip, nunca para lo que
-// se va a renombrar hacia el directorio en vivo.
-const DIR_STAGING = path.join(RAIZ_PROYECTO, '.actualizador-staging');
+// Lo que nunca se toca al actualizar, aunque venga (o no) en el zip del repo:
+// configuracion local, secretos y estado propio de esta instalacion.
+const RUTAS_PROTEGIDAS = [
+  '.env',
+  '.env.local',
+  'logs',
+  'src/data',
+  'src/resources/passbd.json',
+  'node_modules',
+];
 
 function repoConfigurado() {
   return Boolean(config.actualizador.repoOwner && config.actualizador.repoName);
@@ -48,98 +45,49 @@ export async function obtenerEstado() {
   }
 }
 
-// "fetch failed" es el mensaje generico que usa undici para CUALQUIER error
-// de red (timeout, reset de conexion, DNS, TLS); la causa real viaja en
-// err.cause y antes se perdia. La combinamos en un solo mensaje para que
-// quede algo util en backend.log.
-function describirErrorFetch(err) {
-  const causa = err.cause ? `${err.cause.code || err.cause.message || err.cause}` : null;
-  return causa ? `${err.message} (${causa})` : err.message;
-}
-
-// GitHub (api.github.com y codeload.github.com) a veces corta la conexion de
-// forma transitoria. Un solo intento fallido no deberia tumbar la
-// actualizacion completa, asi que reintentamos con backoff antes de rendirnos.
-async function conReintentos(fn, { intentos = 3, esperaMs = 1500 } = {}) {
-  let ultimoError;
-  for (let intento = 1; intento <= intentos; intento++) {
-    try {
-      return await fn();
-    } catch (err) {
-      ultimoError = err;
-      log(`Intento ${intento}/${intentos} fallo: ${describirErrorFetch(err)}`);
-      if (intento < intentos) await new Promise((r) => setTimeout(r, esperaMs * intento));
-    }
-  }
-  throw new Error(describirErrorFetch(ultimoError));
-}
-
 async function obtenerUltimoCommit() {
   const { repoOwner, repoName, rama } = config.actualizador;
-  return conReintentos(async () => {
-    const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`, {
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
-    const datos = await resp.json();
-    return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
-  });
+  const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`);
+  if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
+  const datos = await resp.json();
+  return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
 }
 
 async function descargarZip(destino) {
   const { repoOwner, repoName, rama } = config.actualizador;
-  // Se pide directo a codeload.github.com en vez de a
-  // github.com/.../archive/....zip (que redirige ahi mismo). En algunas
-  // redes el redirect github.com -> codeload.github.com se corta a mitad de
-  // camino cuando lo sigue fetch de Node (UND_ERR_SOCKET, 0 bytes leidos)
-  // aunque el navegador y una descarga directa a codeload funcionen bien.
-  const url = `https://codeload.github.com/${repoOwner}/${repoName}/zip/refs/heads/${rama}`;
-  await conReintentos(async () => {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
-    if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
-    const buffer = Buffer.from(await resp.arrayBuffer());
-    await fsp.writeFile(destino, buffer);
-  });
+  const url = `https://github.com/${repoOwner}/${repoName}/archive/refs/heads/${rama}.zip`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  await fsp.writeFile(destino, buffer);
+}
+
+function esRutaProtegida(rutaRelativa) {
+  const normalizada = rutaRelativa.split(path.sep).join('/');
+  return RUTAS_PROTEGIDAS.some((protegida) => normalizada === protegida || normalizada.startsWith(`${protegida}/`));
+}
+
+// Copia recursiva que respeta RUTAS_PROTEGIDAS -- nunca sobreescribe .env,
+// logs/, la config de conexion ni passbd.json, aunque el repo los incluyera.
+async function copiarSobreescribiendo(origen, destino, prefijoRelativo = '') {
+  const entradas = await fsp.readdir(origen, { withFileTypes: true });
+  await fsp.mkdir(destino, { recursive: true });
+  for (const entrada of entradas) {
+    const relativa = prefijoRelativo ? `${prefijoRelativo}/${entrada.name}` : entrada.name;
+    if (esRutaProtegida(relativa)) continue;
+    const rutaOrigen = path.join(origen, entrada.name);
+    const rutaDestino = path.join(destino, entrada.name);
+    if (entrada.isDirectory()) {
+      await copiarSobreescribiendo(rutaOrigen, rutaDestino, relativa);
+    } else {
+      await fsp.copyFile(rutaOrigen, rutaDestino);
+    }
+  }
 }
 
 function ejecutar(comando, args, cwd) {
   log(`Ejecutando: ${comando} ${args.join(' ')} (en ${cwd})`);
   execFileSync(comando, args, { cwd, stdio: 'pipe', shell: true });
-}
-
-// Copia las rutas protegidas (config, secretos, estado local) desde la
-// instalacion en vivo hacia la copia staged, para que sobrevivan la
-// actualizacion aunque el repo no las incluya (o las incluya con otro
-// contenido). Si dirViejo no existe todavia (primera instalacion) no hay
-// nada que preservar.
-async function preservarRutasProtegidas(dirViejo, dirStaging) {
-  for (const relativa of RUTAS_PROTEGIDAS) {
-    const partes = relativa.split('/');
-    const origen = path.join(dirViejo, ...partes);
-    if (!fs.existsSync(origen)) continue;
-    const destino = path.join(dirStaging, ...partes);
-    await fsp.rm(destino, { recursive: true, force: true });
-    await fsp.mkdir(path.dirname(destino), { recursive: true });
-    await fsp.cp(origen, destino, { recursive: true });
-  }
-}
-
-// Reemplaza el directorio en vivo por la copia staged con dos renames (mismo
-// disco = practicamente instantaneo), para minimizar la ventana en la que
-// --watch puede reiniciar el proceso a mitad de camino. Si el segundo rename
-// falla, se intenta restaurar el directorio original.
-async function reemplazarDirectorio(dirViejo, dirStaging) {
-  const respaldo = `${dirViejo}.old`;
-  await fsp.rm(respaldo, { recursive: true, force: true });
-  const habiaViejo = fs.existsSync(dirViejo);
-  if (habiaViejo) await fsp.rename(dirViejo, respaldo);
-  try {
-    await fsp.rename(dirStaging, dirViejo);
-  } catch (err) {
-    if (habiaViejo) await fsp.rename(respaldo, dirViejo);
-    throw err;
-  }
-  if (habiaViejo) fsp.rm(respaldo, { recursive: true, force: true }).catch(() => {});
 }
 
 // Devuelve el resultado del intento; si tiene exito, el caller es responsable
@@ -175,46 +123,18 @@ export async function aplicarActualizacion() {
       throw new Error('El repositorio descargado no contiene BackendInventario/ e InventarioWebVue/');
     }
 
-    // Todo lo lento (instalar dependencias, compilar) ocurre en copias
-    // staged dentro de DIR_STAGING, SIN tocar los directorios en vivo --
-    // node --watch no tiene nada que observar ahi, asi que el proceso
-    // actual sigue corriendo sin interrupciones mientras se arma la version
-    // nueva completa. El unico riesgo de reinicio a mitad de camino queda
-    // reducido al swap final, que son solo un par de renames dentro del
-    // mismo disco.
-    await fsp.rm(DIR_STAGING, { recursive: true, force: true });
-    await fsp.mkdir(DIR_STAGING, { recursive: true });
-    const backendStaging = path.join(DIR_STAGING, 'BackendInventario');
-    const frontendStaging = path.join(DIR_STAGING, 'InventarioWebVue');
+    log('Aplicando archivos nuevos del backend...');
+    await copiarSobreescribiendo(backendExtraido, DIR_BACKEND);
 
-    log('Preparando backend en staging...');
-    await fsp.cp(backendExtraido, backendStaging, { recursive: true });
+    log('Aplicando archivos nuevos del frontend...');
+    await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
+
     log('Instalando dependencias del backend...');
-    ejecutar('npm', ['install', '--omit=dev'], backendStaging);
+    ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
 
-    log('Preparando frontend en staging...');
-    await fsp.cp(frontendExtraido, frontendStaging, { recursive: true });
-    // --include=dev: NODE_ENV=production omitiria devDependencies (vite,
-    // @vitejs/plugin-vue) que el build necesita.
-    log('Instalando dependencias del frontend...');
-    ejecutar('npm', ['install', '--include=dev'], frontendStaging);
-    log('Compilando el frontend...');
-    ejecutar('npm', ['run', 'build'], frontendStaging);
-
-    log('Preservando configuracion y datos locales...');
-    await preservarRutasProtegidas(DIR_BACKEND, backendStaging);
-    await preservarRutasProtegidas(DIR_FRONTEND, frontendStaging);
-
-    // El frontend no esta bajo --watch del backend (carpeta hermana, no
-    // observada) -- se aplica sin apuro. El backend si dispara --watch en
-    // cuanto se hace el rename, asi que el version.json se escribe pegado
-    // a ese swap para que quede consistente aunque el proceso se reinicie
-    // apenas despues.
-    log('Aplicando frontend actualizado...');
-    await reemplazarDirectorio(DIR_FRONTEND, frontendStaging);
-
-    log('Aplicando backend actualizado...');
-    await reemplazarDirectorio(DIR_BACKEND, backendStaging);
+    log('Instalando dependencias y compilando el frontend...');
+    ejecutar('npm', ['install'], DIR_FRONTEND);
+    ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
 
     await fsp.mkdir(path.dirname(ARCHIVO_VERSION), { recursive: true });
     await fsp.writeFile(
@@ -229,6 +149,5 @@ export async function aplicarActualizacion() {
     throw err;
   } finally {
     await fsp.rm(dirTemp, { recursive: true, force: true }).catch(() => {});
-    await fsp.rm(DIR_STAGING, { recursive: true, force: true }).catch(() => {});
   }
 }

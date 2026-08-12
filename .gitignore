@@ -15,12 +15,6 @@ BackendInventario/src/data/
 InventarioWebVue/dist/
 InventarioWebVue/dist-ssr/
 
-# Artefactos del actualizador -- deberian limpiarse solos, esto es solo
-# por si un crash a la fuerza los deja tirados
-.actualizador-staging/
-BackendInventario.old/
-InventarioWebVue.old/
-
 # Editor / SO
 .vscode/*
 !.vscode/extensions.json
