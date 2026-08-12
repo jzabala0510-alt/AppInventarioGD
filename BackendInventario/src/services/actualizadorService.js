@@ -90,6 +90,33 @@ function ejecutar(comando, args, cwd) {
   execFileSync(comando, args, { cwd, stdio: 'pipe', shell: true });
 }
 
+// Renombra node_modules a .bak (instantaneo en el mismo disco), ejecuta la
+// instalacion, y si falla restaura el respaldo para que el servidor pueda
+// seguir funcionando con la version anterior.
+async function instalarConRespaldo(dirProyecto, instalar) {
+  const modulos = path.join(dirProyecto, 'node_modules');
+  const respaldo = path.join(dirProyecto, 'node_modules.bak');
+
+  const habia = fs.existsSync(modulos);
+  if (habia) {
+    await fsp.rm(respaldo, { recursive: true, force: true }); // limpia bak previo si quedó
+    log(`Respaldando node_modules de ${path.basename(dirProyecto)}...`);
+    await fsp.rename(modulos, respaldo);
+  }
+
+  try {
+    instalar();
+    if (habia) await fsp.rm(respaldo, { recursive: true, force: true });
+  } catch (err) {
+    if (habia) {
+      log('Instalacion fallida, restaurando node_modules anterior...');
+      await fsp.rm(modulos, { recursive: true, force: true });
+      await fsp.rename(respaldo, modulos);
+    }
+    throw err;
+  }
+}
+
 // Devuelve el resultado del intento; si tiene exito, el caller es responsable
 // de reiniciar el proceso (process.exit) DESPUES de responder al cliente.
 export async function aplicarActualizacion() {
@@ -129,16 +156,16 @@ export async function aplicarActualizacion() {
     log('Aplicando archivos nuevos del frontend...');
     await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
 
-    log('Limpiando node_modules del backend...');
-    await fsp.rm(path.join(DIR_BACKEND, 'node_modules'), { recursive: true, force: true });
     log('Instalando dependencias del backend...');
-    ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
+    await instalarConRespaldo(DIR_BACKEND, () => {
+      ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
+    });
 
-    log('Limpiando node_modules del frontend...');
-    await fsp.rm(path.join(DIR_FRONTEND, 'node_modules'), { recursive: true, force: true });
     log('Instalando dependencias y compilando el frontend...');
-    ejecutar('npm', ['install'], DIR_FRONTEND);
-    ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
+    await instalarConRespaldo(DIR_FRONTEND, () => {
+      ejecutar('npm', ['install'], DIR_FRONTEND);
+      ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
+    });
 
     await fsp.mkdir(path.dirname(ARCHIVO_VERSION), { recursive: true });
     await fsp.writeFile(
