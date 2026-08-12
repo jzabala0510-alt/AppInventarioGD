@@ -129,9 +129,13 @@ export async function aplicarActualizacion() {
     log('Aplicando archivos nuevos del frontend...');
     await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
 
+    log('Limpiando node_modules del backend...');
+    await fsp.rm(path.join(DIR_BACKEND, 'node_modules'), { recursive: true, force: true });
     log('Instalando dependencias del backend...');
     ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
 
+    log('Limpiando node_modules del frontend...');
+    await fsp.rm(path.join(DIR_FRONTEND, 'node_modules'), { recursive: true, force: true });
     log('Instalando dependencias y compilando el frontend...');
     ejecutar('npm', ['install'], DIR_FRONTEND);
     ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
