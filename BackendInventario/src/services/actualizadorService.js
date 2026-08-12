@@ -17,16 +17,19 @@ const DIR_BACKEND = path.join(RAIZ_PROYECTO, 'BackendInventario');
 const DIR_FRONTEND = path.join(RAIZ_PROYECTO, 'InventarioWebVue');
 const ARCHIVO_VERSION = path.join(__dirname, '../../logs/version.json');
 
-// Lo que nunca se toca al actualizar, aunque venga (o no) en el zip del repo:
-// configuracion local, secretos y estado propio de esta instalacion.
-const RUTAS_PROTEGIDAS = [
-  '.env',
-  '.env.local',
-  'logs',
-  'src/data',
-  'src/resources/passbd.json',
-  'node_modules',
-];
+// Lo que nunca viene del zip descargado, aunque el repo lo incluyera:
+// configuracion local, secretos y estado propio de esta instalacion. Se
+// preservan copiando la version en vivo hacia la copia staged justo antes
+// del swap final (node_modules NO va aca: la copia staged ya trae uno
+// recien instalado, y ese es el que debe quedar).
+const RUTAS_PROTEGIDAS = ['.env', '.env.local', 'logs', 'src/data', 'src/resources/passbd.json'];
+
+// Staging DENTRO de la raiz del proyecto (mismo disco que DIR_BACKEND /
+// DIR_FRONTEND): el swap final es un rename, y eso solo es instantaneo
+// dentro del mismo volumen. os.tmpdir() puede estar en otro disco segun el
+// sistema, asi que solo se usa para bajar/extraer el zip, nunca para lo que
+// se va a renombrar hacia el directorio en vivo.
+const DIR_STAGING = path.join(RAIZ_PROYECTO, '.actualizador-staging');
 
 function repoConfigurado() {
   return Boolean(config.actualizador.repoOwner && config.actualizador.repoName);
@@ -99,68 +102,44 @@ async function descargarZip(destino) {
   });
 }
 
-function esRutaProtegida(rutaRelativa) {
-  const normalizada = rutaRelativa.split(path.sep).join('/');
-  return RUTAS_PROTEGIDAS.some((protegida) => normalizada === protegida || normalizada.startsWith(`${protegida}/`));
-}
-
-// Copia recursiva que respeta RUTAS_PROTEGIDAS -- nunca sobreescribe .env,
-// logs/, la config de conexion ni passbd.json, aunque el repo los incluyera.
-async function copiarSobreescribiendo(origen, destino, prefijoRelativo = '') {
-  const entradas = await fsp.readdir(origen, { withFileTypes: true });
-  await fsp.mkdir(destino, { recursive: true });
-  for (const entrada of entradas) {
-    const relativa = prefijoRelativo ? `${prefijoRelativo}/${entrada.name}` : entrada.name;
-    if (esRutaProtegida(relativa)) continue;
-    const rutaOrigen = path.join(origen, entrada.name);
-    const rutaDestino = path.join(destino, entrada.name);
-    if (entrada.isDirectory()) {
-      await copiarSobreescribiendo(rutaOrigen, rutaDestino, relativa);
-    } else {
-      await fsp.copyFile(rutaOrigen, rutaDestino);
-    }
-  }
-}
-
 function ejecutar(comando, args, cwd) {
   log(`Ejecutando: ${comando} ${args.join(' ')} (en ${cwd})`);
   execFileSync(comando, args, { cwd, stdio: 'pipe', shell: true });
 }
 
-// Instala dependencias en un directorio de staging mientras el node_modules
-// original permanece intacto (el servidor puede reiniciarse en cualquier
-// momento y seguira encontrando sus modulos). Solo al terminar la instalacion
-// se hace el swap: dos renames rapidos. Si la instalacion falla, el staging
-// se elimina y el original no se toco.
-async function instalarConRespaldo(dirProyecto, argsInstall) {
-  const modulos = path.join(dirProyecto, 'node_modules');
-  const staging = path.join(dirProyecto, 'node_modules.staging');
-  const respaldo = path.join(dirProyecto, 'node_modules.bak');
+// Copia las rutas protegidas (config, secretos, estado local) desde la
+// instalacion en vivo hacia la copia staged, para que sobrevivan la
+// actualizacion aunque el repo no las incluya (o las incluya con otro
+// contenido). Si dirViejo no existe todavia (primera instalacion) no hay
+// nada que preservar.
+async function preservarRutasProtegidas(dirViejo, dirStaging) {
+  for (const relativa of RUTAS_PROTEGIDAS) {
+    const partes = relativa.split('/');
+    const origen = path.join(dirViejo, ...partes);
+    if (!fs.existsSync(origen)) continue;
+    const destino = path.join(dirStaging, ...partes);
+    await fsp.rm(destino, { recursive: true, force: true });
+    await fsp.mkdir(path.dirname(destino), { recursive: true });
+    await fsp.cp(origen, destino, { recursive: true });
+  }
+}
 
-  // Limpiar artefactos de intentos anteriores
-  await fsp.rm(staging, { recursive: true, force: true });
+// Reemplaza el directorio en vivo por la copia staged con dos renames (mismo
+// disco = practicamente instantaneo), para minimizar la ventana en la que
+// --watch puede reiniciar el proceso a mitad de camino. Si el segundo rename
+// falla, se intenta restaurar el directorio original.
+async function reemplazarDirectorio(dirViejo, dirStaging) {
+  const respaldo = `${dirViejo}.old`;
   await fsp.rm(respaldo, { recursive: true, force: true });
-
+  const habiaViejo = fs.existsSync(dirViejo);
+  if (habiaViejo) await fsp.rename(dirViejo, respaldo);
   try {
-    // npm install --prefix <staging> necesita package.json en ese directorio
-    await fsp.mkdir(staging, { recursive: true });
-    await fsp.copyFile(path.join(dirProyecto, 'package.json'), path.join(staging, 'package.json'));
-
-    log(`Instalando dependencias de ${path.basename(dirProyecto)} en staging...`);
-    ejecutar('npm', [...argsInstall, '--prefix', staging], dirProyecto);
-
-    // Swap atomico: el node_modules original estuvo intacto durante toda la instalacion
-    if (fs.existsSync(modulos)) await fsp.rename(modulos, respaldo);
-    await fsp.rename(path.join(staging, 'node_modules'), modulos);
-
-    // Limpieza asincrona — no bloquea el flujo de actualizacion
-    fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
-    fsp.rm(respaldo, { recursive: true, force: true }).catch(() => {});
+    await fsp.rename(dirStaging, dirViejo);
   } catch (err) {
-    log(`Instalacion fallida en ${path.basename(dirProyecto)}, node_modules original intacto`);
-    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (habiaViejo) await fsp.rename(respaldo, dirViejo);
     throw err;
   }
+  if (habiaViejo) fsp.rm(respaldo, { recursive: true, force: true }).catch(() => {});
 }
 
 // Devuelve el resultado del intento; si tiene exito, el caller es responsable
@@ -196,22 +175,46 @@ export async function aplicarActualizacion() {
       throw new Error('El repositorio descargado no contiene BackendInventario/ e InventarioWebVue/');
     }
 
-    log('Aplicando archivos nuevos del backend...');
-    await copiarSobreescribiendo(backendExtraido, DIR_BACKEND);
+    // Todo lo lento (instalar dependencias, compilar) ocurre en copias
+    // staged dentro de DIR_STAGING, SIN tocar los directorios en vivo --
+    // node --watch no tiene nada que observar ahi, asi que el proceso
+    // actual sigue corriendo sin interrupciones mientras se arma la version
+    // nueva completa. El unico riesgo de reinicio a mitad de camino queda
+    // reducido al swap final, que son solo un par de renames dentro del
+    // mismo disco.
+    await fsp.rm(DIR_STAGING, { recursive: true, force: true });
+    await fsp.mkdir(DIR_STAGING, { recursive: true });
+    const backendStaging = path.join(DIR_STAGING, 'BackendInventario');
+    const frontendStaging = path.join(DIR_STAGING, 'InventarioWebVue');
 
-    log('Aplicando archivos nuevos del frontend...');
-    await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
-
+    log('Preparando backend en staging...');
+    await fsp.cp(backendExtraido, backendStaging, { recursive: true });
     log('Instalando dependencias del backend...');
-    await instalarConRespaldo(DIR_BACKEND, ['install', '--omit=dev']);
+    ejecutar('npm', ['install', '--omit=dev'], backendStaging);
 
-    // --include=dev garantiza que las devDependencies (vite, @vitejs/plugin-vue,
-    // etc.) se instalen aunque NODE_ENV=production este activo en el entorno.
+    log('Preparando frontend en staging...');
+    await fsp.cp(frontendExtraido, frontendStaging, { recursive: true });
+    // --include=dev: NODE_ENV=production omitiria devDependencies (vite,
+    // @vitejs/plugin-vue) que el build necesita.
     log('Instalando dependencias del frontend...');
-    await instalarConRespaldo(DIR_FRONTEND, ['install', '--include=dev']);
-
+    ejecutar('npm', ['install', '--include=dev'], frontendStaging);
     log('Compilando el frontend...');
-    ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
+    ejecutar('npm', ['run', 'build'], frontendStaging);
+
+    log('Preservando configuracion y datos locales...');
+    await preservarRutasProtegidas(DIR_BACKEND, backendStaging);
+    await preservarRutasProtegidas(DIR_FRONTEND, frontendStaging);
+
+    // El frontend no esta bajo --watch del backend (carpeta hermana, no
+    // observada) -- se aplica sin apuro. El backend si dispara --watch en
+    // cuanto se hace el rename, asi que el version.json se escribe pegado
+    // a ese swap para que quede consistente aunque el proceso se reinicie
+    // apenas despues.
+    log('Aplicando frontend actualizado...');
+    await reemplazarDirectorio(DIR_FRONTEND, frontendStaging);
+
+    log('Aplicando backend actualizado...');
+    await reemplazarDirectorio(DIR_BACKEND, backendStaging);
 
     await fsp.mkdir(path.dirname(ARCHIVO_VERSION), { recursive: true });
     await fsp.writeFile(
@@ -226,5 +229,6 @@ export async function aplicarActualizacion() {
     throw err;
   } finally {
     await fsp.rm(dirTemp, { recursive: true, force: true }).catch(() => {});
+    await fsp.rm(DIR_STAGING, { recursive: true, force: true }).catch(() => {});
   }
 }
