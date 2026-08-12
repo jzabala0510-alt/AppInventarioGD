@@ -90,29 +90,38 @@ function ejecutar(comando, args, cwd) {
   execFileSync(comando, args, { cwd, stdio: 'pipe', shell: true });
 }
 
-// Renombra node_modules a .bak (instantaneo en el mismo disco), ejecuta la
-// instalacion, y si falla restaura el respaldo para que el servidor pueda
-// seguir funcionando con la version anterior.
-async function instalarConRespaldo(dirProyecto, instalar) {
+// Instala dependencias en un directorio de staging mientras el node_modules
+// original permanece intacto (el servidor puede reiniciarse en cualquier
+// momento y seguira encontrando sus modulos). Solo al terminar la instalacion
+// se hace el swap: dos renames rapidos. Si la instalacion falla, el staging
+// se elimina y el original no se toco.
+async function instalarConRespaldo(dirProyecto, argsInstall) {
   const modulos = path.join(dirProyecto, 'node_modules');
+  const staging = path.join(dirProyecto, 'node_modules.staging');
   const respaldo = path.join(dirProyecto, 'node_modules.bak');
 
-  const habia = fs.existsSync(modulos);
-  if (habia) {
-    await fsp.rm(respaldo, { recursive: true, force: true }); // limpia bak previo si quedó
-    log(`Respaldando node_modules de ${path.basename(dirProyecto)}...`);
-    await fsp.rename(modulos, respaldo);
-  }
+  // Limpiar artefactos de intentos anteriores
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.rm(respaldo, { recursive: true, force: true });
 
   try {
-    instalar();
-    if (habia) await fsp.rm(respaldo, { recursive: true, force: true });
+    // npm install --prefix <staging> necesita package.json en ese directorio
+    await fsp.mkdir(staging, { recursive: true });
+    await fsp.copyFile(path.join(dirProyecto, 'package.json'), path.join(staging, 'package.json'));
+
+    log(`Instalando dependencias de ${path.basename(dirProyecto)} en staging...`);
+    ejecutar('npm', [...argsInstall, '--prefix', staging], dirProyecto);
+
+    // Swap atomico: el node_modules original estuvo intacto durante toda la instalacion
+    if (fs.existsSync(modulos)) await fsp.rename(modulos, respaldo);
+    await fsp.rename(path.join(staging, 'node_modules'), modulos);
+
+    // Limpieza asincrona — no bloquea el flujo de actualizacion
+    fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+    fsp.rm(respaldo, { recursive: true, force: true }).catch(() => {});
   } catch (err) {
-    if (habia) {
-      log('Instalacion fallida, restaurando node_modules anterior...');
-      await fsp.rm(modulos, { recursive: true, force: true });
-      await fsp.rename(respaldo, modulos);
-    }
+    log(`Instalacion fallida en ${path.basename(dirProyecto)}, node_modules original intacto`);
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
 }
@@ -157,15 +166,15 @@ export async function aplicarActualizacion() {
     await copiarSobreescribiendo(frontendExtraido, DIR_FRONTEND);
 
     log('Instalando dependencias del backend...');
-    await instalarConRespaldo(DIR_BACKEND, () => {
-      ejecutar('npm', ['install', '--omit=dev'], DIR_BACKEND);
-    });
+    await instalarConRespaldo(DIR_BACKEND, ['install', '--omit=dev']);
 
-    log('Instalando dependencias y compilando el frontend...');
-    await instalarConRespaldo(DIR_FRONTEND, () => {
-      ejecutar('npm', ['install'], DIR_FRONTEND);
-      ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
-    });
+    // --include=dev garantiza que las devDependencies (vite, @vitejs/plugin-vue,
+    // etc.) se instalen aunque NODE_ENV=production este activo en el entorno.
+    log('Instalando dependencias del frontend...');
+    await instalarConRespaldo(DIR_FRONTEND, ['install', '--include=dev']);
+
+    log('Compilando el frontend...');
+    ejecutar('npm', ['run', 'build'], DIR_FRONTEND);
 
     await fsp.mkdir(path.dirname(ARCHIVO_VERSION), { recursive: true });
     await fsp.writeFile(
