@@ -45,21 +45,58 @@ export async function obtenerEstado() {
   }
 }
 
+// "fetch failed" es el mensaje generico que usa undici para CUALQUIER error
+// de red (timeout, reset de conexion, DNS, TLS); la causa real viaja en
+// err.cause y antes se perdia. La combinamos en un solo mensaje para que
+// quede algo util en backend.log.
+function describirErrorFetch(err) {
+  const causa = err.cause ? `${err.cause.code || err.cause.message || err.cause}` : null;
+  return causa ? `${err.message} (${causa})` : err.message;
+}
+
+// GitHub (api.github.com y codeload.github.com) a veces corta la conexion de
+// forma transitoria. Un solo intento fallido no deberia tumbar la
+// actualizacion completa, asi que reintentamos con backoff antes de rendirnos.
+async function conReintentos(fn, { intentos = 3, esperaMs = 1500 } = {}) {
+  let ultimoError;
+  for (let intento = 1; intento <= intentos; intento++) {
+    try {
+      return await fn();
+    } catch (err) {
+      ultimoError = err;
+      log(`Intento ${intento}/${intentos} fallo: ${describirErrorFetch(err)}`);
+      if (intento < intentos) await new Promise((r) => setTimeout(r, esperaMs * intento));
+    }
+  }
+  throw new Error(describirErrorFetch(ultimoError));
+}
+
 async function obtenerUltimoCommit() {
   const { repoOwner, repoName, rama } = config.actualizador;
-  const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`);
-  if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
-  const datos = await resp.json();
-  return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
+  return conReintentos(async () => {
+    const resp = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/commits/${rama}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`No se pudo consultar el ultimo commit (${resp.status})`);
+    const datos = await resp.json();
+    return { sha: datos.sha, mensaje: datos.commit?.message?.split('\n')[0], fecha: datos.commit?.author?.date };
+  });
 }
 
 async function descargarZip(destino) {
   const { repoOwner, repoName, rama } = config.actualizador;
-  const url = `https://github.com/${repoOwner}/${repoName}/archive/refs/heads/${rama}.zip`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  await fsp.writeFile(destino, buffer);
+  // Se pide directo a codeload.github.com en vez de a
+  // github.com/.../archive/....zip (que redirige ahi mismo). En algunas
+  // redes el redirect github.com -> codeload.github.com se corta a mitad de
+  // camino cuando lo sigue fetch de Node (UND_ERR_SOCKET, 0 bytes leidos)
+  // aunque el navegador y una descarga directa a codeload funcionen bien.
+  const url = `https://codeload.github.com/${repoOwner}/${repoName}/zip/refs/heads/${rama}`;
+  await conReintentos(async () => {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
+    if (!resp.ok) throw new Error(`No se pudo descargar el repositorio (${resp.status})`);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    await fsp.writeFile(destino, buffer);
+  });
 }
 
 function esRutaProtegida(rutaRelativa) {
