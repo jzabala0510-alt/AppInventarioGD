@@ -820,28 +820,12 @@ export async function crearConteo({ fecha, codAlmacen, observacion, filtro = {} 
 
       DELETE FROM rip.CONTEOSTOCK WHERE CODALMACEN=@codAlmacen AND FECHA=@fecha;
 
-      -- Vendidas se congela aqui mismo, junto con el Stock: lo vendido hasta este
-      -- instante en @fecha para esta tienda. A partir de este momento ya no se
-      -- vuelve a calcular en vivo -- solo Uds. Contadas sigue siendo en tiempo real.
-      ;WITH STOCK_FECHA AS (
-        SELECT CODARTICULO, COLOR, TALLA, STOCK
-        FROM rip.RIP_FSTOCK_ARTICULO_FECHA(DATEADD(DAY,-1,@fecha), @codAlmacen)
-      ), VENTAS_FECHA AS (
-        SELECT AVL.CODARTICULO, AVL.COLOR, AVL.TALLA, SUM(AVL.UNIDADESTOTAL) AS VENDIDAS
-        FROM dbo.ALBVENTACAB AVC WITH(NOLOCK)
-          INNER JOIN dbo.ALBVENTALIN AVL WITH(NOLOCK) ON AVC.NUMSERIE=AVL.NUMSERIE AND AVC.NUMALBARAN=AVL.NUMALBARAN AND AVC.N=AVL.N
-        WHERE AVC.FECHA=@fecha AND AVL.CODALMACEN=@codAlmacen AND AVL.UNIDADESTOTAL<>0
-        GROUP BY AVL.CODARTICULO, AVL.COLOR, AVL.TALLA
-      )
-      INSERT INTO rip.CONTEOSTOCK (CODALMACEN, FECHA, CODARTICULO, COLOR, TALLA, STOCK, VENDIDAS)
-      SELECT @codAlmacen, @fecha
-        , ISNULL(S.CODARTICULO, V.CODARTICULO)
-        , ISNULL(S.COLOR, V.COLOR COLLATE Latin1_General_CS_AI)
-        , ISNULL(S.TALLA, V.TALLA COLLATE Latin1_General_CS_AI)
-        , ISNULL(S.STOCK, 0)
-        , ISNULL(V.VENDIDAS, 0)
-      FROM STOCK_FECHA S
-      FULL OUTER JOIN VENTAS_FECHA V ON S.CODARTICULO=V.CODARTICULO AND S.COLOR=V.COLOR COLLATE Latin1_General_CS_AI AND S.TALLA=V.TALLA COLLATE Latin1_General_CS_AI;
+      -- VENDIDAS se deja NULL a proposito: se congela por articulo la primera
+      -- vez que se cuenta (ver congelarVendidasPrimeraVez en
+      -- conteoBatchService.js), no aqui de una sola vez para toda la tienda.
+      INSERT INTO rip.CONTEOSTOCK (CODALMACEN, FECHA, CODARTICULO, COLOR, TALLA, STOCK)
+      SELECT @codAlmacen, @fecha, CODARTICULO, COLOR, TALLA, STOCK
+      FROM rip.RIP_FSTOCK_ARTICULO_FECHA(DATEADD(DAY,-1,@fecha), @codAlmacen);
     `);
 
   const idResult = await pool.request()
