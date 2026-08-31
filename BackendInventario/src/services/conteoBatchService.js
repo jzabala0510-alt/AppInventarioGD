@@ -1,5 +1,5 @@
 import zlib from 'node:zlib';
-import { getPool, sql } from '../db/pool.js';
+import { getPool, sql, getCapacidadesServidor } from '../db/pool.js';
 
 // Reconstruccion de mejor esfuerzo: el mapeo de resultset de
 // Articulo.buscarCodigo() se perdio en la descompilacion (JD-GUI no reconstruyo
@@ -44,15 +44,39 @@ async function buscarArticuloPorCodigo({ codigo, codAlmacen, codArticulo = -1, c
 // derivadas en 0 unidades para otras combinaciones color/talla del mismo
 // articulo (ver mas abajo, caso TALLA='@') -- la query encuentra todas las
 // combinaciones nuevas de ese articulo en rip.CONTEOLIN por su cuenta.
+// Agrega cada valor como un parametro individual (@prefijo0, @prefijo1, ...)
+// y devuelve la subconsulta VALUES equivalente a "SELECT x FROM (lista)" --
+// funciona en cualquier version de SQL Server (row constructor VALUES existe
+// desde 2008), a diferencia de OPENJSON/STRING_SPLIT que solo llegan con 2016+.
+function listaComoValues(request, prefijo, valores) {
+  const nombres = valores.map((v, i) => {
+    const nombre = `${prefijo}${i}`;
+    request.input(nombre, sql.Int, v);
+    return `(@${nombre})`;
+  });
+  return `SELECT valor FROM (VALUES ${nombres.join(', ')}) AS T(valor)`;
+}
+
 async function congelarVendidasPrimeraVez(executor, { fecha, codAlmacen, codArticulos }) {
   const unicos = [...new Set(codArticulos)].filter((c) => Number.isInteger(c) && c > 0);
   if (unicos.length === 0) return;
 
-  await new sql.Request(executor)
+  const request = new sql.Request(executor)
     .input('fecha', sql.Date, fecha)
-    .input('codAlmacen', sql.NVarChar(3), codAlmacen)
-    .input('codArticulosJson', sql.NVarChar(sql.MAX), JSON.stringify(unicos))
-    .query(`
+    .input('codAlmacen', sql.NVarChar(3), codAlmacen);
+
+  // OPENJSON solo existe desde SQL Server 2016 (version mayor 13) -- algunas
+  // tiendas todavia tienen cajas en 2014 o anteriores (ver getCapacidadesServidor,
+  // detectado al conectar). Mismo resultado por otra via, sin depender de eso.
+  const { soportaOpenJson } = getCapacidadesServidor();
+  const subconsultaArticulos = soportaOpenJson
+    ? (() => {
+        request.input('codArticulosJson', sql.NVarChar(sql.MAX), JSON.stringify(unicos));
+        return 'SELECT CAST([value] AS INT) valor FROM OPENJSON(@codArticulosJson)';
+      })()
+    : listaComoValues(request, 'art', unicos);
+
+  await request.query(`
       -- Primer HORACONTEO real (ya insertado) de cada combinacion todavia sin
       -- congelar, y lo vendido en esta tienda desde @fecha hasta ese instante.
       SELECT PC.CODARTICULO, PC.COLOR, PC.TALLA, ISNULL(V.VENDIDAS,0) VENDIDAS
@@ -61,7 +85,7 @@ async function congelarVendidasPrimeraVez(executor, { fecha, codAlmacen, codArti
         SELECT CL.CODARTICULO, CL.COLOR, CL.TALLA, MIN(CL.HORACONTEO) HORA
         FROM rip.CONTEOLIN CL WITH(NOLOCK)
         WHERE CL.FECHA=@fecha AND CL.CODALMACEN=@codAlmacen
-          AND CL.CODARTICULO IN (SELECT CAST([value] AS INT) FROM OPENJSON(@codArticulosJson))
+          AND CL.CODARTICULO IN (${subconsultaArticulos})
         GROUP BY CL.CODARTICULO, CL.COLOR, CL.TALLA
       ) PC
       INNER JOIN rip.CONTEOSTOCK ST WITH(NOLOCK) ON ST.CODALMACEN=@codAlmacen AND ST.FECHA=@fecha

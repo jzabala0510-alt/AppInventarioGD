@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import sql from 'mssql';
 import { config } from '../config/env.js';
 import { encriptar, desEncriptar } from '../utils/normalkeyConexion.js';
+import { log } from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -90,15 +91,51 @@ if (!configGuardada && estadoActivo) persistirConfigActiva(); // primer arranque
 
 let poolPromise = null;
 
+// Cachea que tan moderno es el SQL Server conectado, para que el resto del
+// backend pueda evitar sintaxis que ese servidor no soporte (p.ej. OPENJSON,
+// que solo existe desde SQL Server 2016/version mayor 13 -- una tienda con
+// una caja en SQL Server 2014 o anterior necesita un metodo alternativo).
+let capacidadesServidor = { soportaOpenJson: true, versionMayor: null };
+
+async function detectarCapacidadesServidor(pool) {
+  try {
+    const result = await pool.request().query(
+      "SELECT CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(50)) AS VERSION",
+    );
+    const version = result.recordset[0]?.VERSION || '';
+    const versionMayor = parseInt(version.split('.')[0], 10);
+    const soportaOpenJson = Number.isNaN(versionMayor) ? true : versionMayor >= 13;
+    capacidadesServidor = { soportaOpenJson, versionMayor: Number.isNaN(versionMayor) ? null : versionMayor };
+    if (!soportaOpenJson) {
+      log(`SQL Server ${version} detectado -- sin soporte OPENJSON, se usa el metodo de envio alternativo`);
+    }
+  } catch (err) {
+    // Si no se pudo detectar (permisos insuficientes sobre SERVERPROPERTY,
+    // error transitorio, etc.), asume que si soporta -- es el caso mas comun
+    // y evita degradar de mas una instalacion moderna por un fallo puntual.
+    capacidadesServidor = { soportaOpenJson: true, versionMayor: null };
+  }
+}
+
+export function getCapacidadesServidor() {
+  return { ...capacidadesServidor };
+}
+
 export function getPool() {
   if (!estadoActivo) {
     return Promise.reject(new Error('No hay una conexion de base de datos configurada. Ve a Configuracion > Base de datos.'));
   }
   if (!poolPromise) {
-    poolPromise = new sql.ConnectionPool(construirSqlConfig(estadoActivo)).connect().catch((err) => {
-      poolPromise = null; // permite reintentar en la siguiente llamada
-      throw err;
-    });
+    poolPromise = new sql.ConnectionPool(construirSqlConfig(estadoActivo))
+      .connect()
+      .then(async (pool) => {
+        await detectarCapacidadesServidor(pool);
+        return pool;
+      })
+      .catch((err) => {
+        poolPromise = null; // permite reintentar en la siguiente llamada
+        throw err;
+      });
   }
   return poolPromise;
 }
@@ -125,6 +162,7 @@ export async function probarConexionCon(parametros) {
 export async function reconfigurarPool(parametros) {
   const nuevoPool = new sql.ConnectionPool(construirSqlConfig(parametros));
   await nuevoPool.connect();
+  await detectarCapacidadesServidor(nuevoPool);
 
   const anterior = poolPromise;
   poolPromise = Promise.resolve(nuevoPool);
