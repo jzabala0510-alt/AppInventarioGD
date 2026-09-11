@@ -1,5 +1,5 @@
 import zlib from 'node:zlib';
-import { getPool, sql, getCapacidadesServidor } from '../db/pool.js';
+import { getPool, sql } from '../db/pool.js';
 
 // Reconstruccion de mejor esfuerzo: el mapeo de resultset de
 // Articulo.buscarCodigo() se perdio en la descompilacion (JD-GUI no reconstruyo
@@ -31,82 +31,6 @@ async function buscarArticuloPorCodigo({ codigo, codAlmacen, codArticulo = -1, c
     seccion: r.SECCION,
     stockRepo: r.STOCK ?? 0,
   }));
-}
-
-// Congela Vendidas por articulo/color/talla la PRIMERA VEZ que entra a
-// rip.CONTEOLIN en este conteo -- no en vivo, no al crear el conteo (eso
-// solo pasa con Stock). rip.CONTEOSTOCK.VENDIDAS empieza en NULL para todo
-// (ver crearConteo); NULL es la marca de "todavia no congelado", asi que
-// esta funcion es segura de llamar mas de una vez para el mismo articulo.
-//
-// Recibe codigos de articulo (no color/talla puntual a proposito): un mismo
-// INSERT en CONTEOLIN puede traer, ademas de la linea contada, lineas
-// derivadas en 0 unidades para otras combinaciones color/talla del mismo
-// articulo (ver mas abajo, caso TALLA='@') -- la query encuentra todas las
-// combinaciones nuevas de ese articulo en rip.CONTEOLIN por su cuenta.
-// Agrega cada valor como un parametro individual (@prefijo0, @prefijo1, ...)
-// y devuelve la subconsulta VALUES equivalente a "SELECT x FROM (lista)" --
-// funciona en cualquier version de SQL Server (row constructor VALUES existe
-// desde 2008), a diferencia de OPENJSON/STRING_SPLIT que solo llegan con 2016+.
-function listaComoValues(request, prefijo, valores) {
-  const nombres = valores.map((v, i) => {
-    const nombre = `${prefijo}${i}`;
-    request.input(nombre, sql.Int, v);
-    return `(@${nombre})`;
-  });
-  return `SELECT valor FROM (VALUES ${nombres.join(', ')}) AS T(valor)`;
-}
-
-async function congelarVendidasPrimeraVez(executor, { fecha, codAlmacen, codArticulos }) {
-  const unicos = [...new Set(codArticulos)].filter((c) => Number.isInteger(c) && c > 0);
-  if (unicos.length === 0) return;
-
-  const request = new sql.Request(executor)
-    .input('fecha', sql.Date, fecha)
-    .input('codAlmacen', sql.NVarChar(3), codAlmacen);
-
-  // OPENJSON solo existe desde SQL Server 2016 (version mayor 13) -- algunas
-  // tiendas todavia tienen cajas en 2014 o anteriores (ver getCapacidadesServidor,
-  // detectado al conectar). Mismo resultado por otra via, sin depender de eso.
-  const { soportaOpenJson } = getCapacidadesServidor();
-  const subconsultaArticulos = soportaOpenJson
-    ? (() => {
-        request.input('codArticulosJson', sql.NVarChar(sql.MAX), JSON.stringify(unicos));
-        return 'SELECT CAST([value] AS INT) valor FROM OPENJSON(@codArticulosJson)';
-      })()
-    : listaComoValues(request, 'art', unicos);
-
-  await request.query(`
-      -- Primer HORACONTEO real (ya insertado) de cada combinacion todavia sin
-      -- congelar, y lo vendido en esta tienda desde @fecha hasta ese instante.
-      SELECT PC.CODARTICULO, PC.COLOR, PC.TALLA, ISNULL(V.VENDIDAS,0) VENDIDAS
-      INTO #primerConteo
-      FROM (
-        SELECT CL.CODARTICULO, CL.COLOR, CL.TALLA, MIN(CL.HORACONTEO) HORA
-        FROM rip.CONTEOLIN CL WITH(NOLOCK)
-        WHERE CL.FECHA=@fecha AND CL.CODALMACEN=@codAlmacen
-          AND CL.CODARTICULO IN (${subconsultaArticulos})
-        GROUP BY CL.CODARTICULO, CL.COLOR, CL.TALLA
-      ) PC
-      INNER JOIN rip.CONTEOSTOCK ST WITH(NOLOCK) ON ST.CODALMACEN=@codAlmacen AND ST.FECHA=@fecha
-        AND ST.CODARTICULO=PC.CODARTICULO AND ST.COLOR=PC.COLOR COLLATE Latin1_General_CS_AI AND ST.TALLA=PC.TALLA COLLATE Latin1_General_CS_AI
-      OUTER APPLY (
-        SELECT SUM(AVL.UNIDADESTOTAL) VENDIDAS
-        FROM dbo.ALBVENTALIN AVL WITH(NOLOCK)
-        INNER JOIN dbo.ALBVENTACAB AVC WITH(NOLOCK) ON AVC.NUMSERIE=AVL.NUMSERIE AND AVC.NUMALBARAN=AVL.NUMALBARAN AND AVC.N=AVL.N
-        WHERE AVL.CODARTICULO=PC.CODARTICULO AND AVL.COLOR=PC.COLOR COLLATE Latin1_General_CS_AI AND AVL.TALLA=PC.TALLA COLLATE Latin1_General_CS_AI
-          AND AVC.FECHA>=@fecha AND AVL.CODALMACEN=@codAlmacen AND AVL.UNIDADESTOTAL<>0
-          AND (CASE WHEN AVL.HORA<'20000101' THEN AVC.FECHACREACION ELSE AVL.HORA END) < PC.HORA
-      ) V
-      WHERE ST.VENDIDAS IS NULL;
-
-      UPDATE ST SET VENDIDAS = PC.VENDIDAS
-      FROM rip.CONTEOSTOCK ST
-      INNER JOIN #primerConteo PC ON ST.CODARTICULO=PC.CODARTICULO AND ST.COLOR=PC.COLOR COLLATE Latin1_General_CS_AI AND ST.TALLA=PC.TALLA COLLATE Latin1_General_CS_AI
-      WHERE ST.CODALMACEN=@codAlmacen AND ST.FECHA=@fecha;
-
-      DROP TABLE #primerConteo;
-    `);
 }
 
 async function agregarLineaConteo({ fecha, codAlmacen, codArticulo, color, talla, unidades, zona, sector, codUsuario, codConcepto }) {
@@ -148,8 +72,6 @@ async function agregarLineaConteo({ fecha, codAlmacen, codArticulo, color, talla
       INNER JOIN CTE_CONTEO C ON AL.CODARTICULO=C.CODARTICULO
       WHERE AL.CODARTICULO=@codArticulo AND (AL.TALLA='@')
     `);
-
-  await congelarVendidasPrimeraVez(pool, { fecha, codAlmacen, codArticulos: [codArticulo] });
 }
 
 export async function agregarArticulo(conteoJson) {
@@ -258,19 +180,6 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
           INSERT INTO rip.CONTEOLIN(FECHA, CODALMACEN, CODARTICULO, COLOR, TALLA, UNIDADES, HORACONTEO, ZONA, CODUSUARIO, SECTOR, UNIDADESREALES, IDENVIO, CODCONCEPTO)
           VALUES (@fecha, @codAlmacen, @codArticulo, @color, @talla, @unidades, @horaConteo, @zona, @codUsuario, @sector, @unidades, @idEnvio, @codConcepto)
         `);
-    }
-
-    // Vendidas se congela por articulo, la primera vez que aparece contado en
-    // este conteo -- agrupado por fecha+almacen porque, aunque no es lo usual,
-    // un mismo lote podria en teoria traer lineas de mas de un conteo.
-    const grupos = new Map();
-    for (const linea of lineas) {
-      const clave = `${linea.fecha}|${linea.codAlmacen}`;
-      if (!grupos.has(clave)) grupos.set(clave, { fecha: linea.fecha, codAlmacen: linea.codAlmacen, codArticulos: [] });
-      grupos.get(clave).codArticulos.push(linea.codArticulo);
-    }
-    for (const grupo of grupos.values()) {
-      await congelarVendidasPrimeraVez(transaction, grupo);
     }
 
     const updateResult = await new sql.Request(transaction)
