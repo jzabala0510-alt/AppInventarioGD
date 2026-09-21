@@ -1,6 +1,42 @@
 import zlib from 'node:zlib';
 import { getPool, sql } from '../db/pool.js';
 
+// Ajuste de reloj del lote offline, usado por procesarBatch() mas abajo: el
+// original ataba esta correccion a "fecha" -- la hora que el propio
+// dispositivo dice que es AHORA al momento de armar el envio -- y la
+// aplicaba entera, sin limite, a TODAS las lineas del lote.
+//
+// Problema real (reportado y CONFIRMADO con datos reales 21-sep-2026): un
+// dispositivo puede quedar offline en el piso de venta despues de terminar
+// de escanear, y tardar minutos u horas en reintentar hasta que el envio de
+// verdad llega al servidor (mala señal, reintentos de red) -- con el reloj
+// del celular perfectamente bien puesto. En ese caso "fecha" ya quedo vieja
+// para cuando el servidor la recibe, y la "correccion" adelanta TODO el
+// lote por ese retraso de red completo (puede ser horas), empujando
+// HORACONTEO mas alla de ventas reales que pasaron mientras tanto.
+// Confirmado contra rip.CONTEOLIN/rip.CONTEO_ENVIOS reales: HORACONTEO (ya
+// "corregida") quedaba HORAS DESPUES de HORAPROCESADO del propio lote que
+// la origino -- algo imposible (no se puede contar un articulo despues de
+// que ese mismo envio ya se cerro) -- y esas ventas terminaban contando
+// como "Vendidas" pese a haber ocurrido despues de contar el articulo.
+// Anclar la correccion al escaneo mas reciente del lote en vez de a "fecha"
+// no alcanza para resolver esto -- el retraso de red afecta a ambos por
+// igual.
+//
+// La proteccion real: un desfase de reloj LEGITIMO (celular con la hora mal
+// puesta) es tipicamente de minutos, no de horas. Si la correccion
+// calculada supera ese margen, es mucho mas probable que sea retraso de red
+// que reloj mal puesto -- en ese caso es mas seguro NO ajustar nada
+// (confiar en HORACONTEO tal cual lo reporto el dispositivo, igual que ya
+// hace el escaneo individual en vivo) que aplicar una correccion salvaje
+// que puede corromper el lote entero.
+export const LIMITE_AJUSTE_RELOJ_SEGUNDOS = 10 * 60; // 10 minutos
+
+export function calcularAjusteReloj(fecha, ahoraMs = Date.now(), limiteSegundos = LIMITE_AJUSTE_RELOJ_SEGUNDOS) {
+  const segundosCrudo = Math.floor((ahoraMs - new Date(fecha).getTime()) / 1000);
+  return Number.isFinite(segundosCrudo) && Math.abs(segundosCrudo) <= limiteSegundos ? segundosCrudo : 0;
+}
+
 // Reconstruccion de mejor esfuerzo: el mapeo de resultset de
 // Articulo.buscarCodigo() se perdio en la descompilacion (JD-GUI no reconstruyo
 // esa seccion del bytecode). Las columnas de salida del SP si estan confirmadas
@@ -153,10 +189,9 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
     .input('idEnvio', sql.UniqueIdentifier, idEnvio)
     .query('UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=1 WHERE ID=@idEnvio');
 
-  // Ajuste de reloj: el original desplaza la hora de cada linea por la
-  // diferencia entre "ahora" y la hora en que el lote se genero en el
-  // dispositivo (compensa reloj desincronizado del celular/tablet offline).
-  const segundos = Math.floor((Date.now() - new Date(fecha).getTime()) / 1000);
+  // Ajuste de reloj del lote (ver detalle junto a calcularAjusteReloj, mas
+  // arriba en este archivo).
+  const segundos = calcularAjusteReloj(fecha);
 
   const transaction = new sql.Transaction(pool);
   await transaction.begin();
