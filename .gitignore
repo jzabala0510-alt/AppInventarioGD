@@ -7,6 +7,18 @@
 BackendInventario/src/resources/passbd.json
 BackendInventario/src/data/
 
+# Sesiones de verificacion de conteo (telestockSesionService.js) y los
+# StockMov.txt ya generados -- datos propios de la instalacion, no del repo.
+BackendInventario/data/
+BackendInventario/TeleStock/
+
+# APKs servidos para descarga por QR (app.js: GET /descargas/lista lee esta
+# carpeta directo del disco en cada request, no hace falta que esten en git).
+# Sacados del repo 21-sep-2026: entre los dos pesaban ~17MB y hacian que el
+# zip que descarga el Actualizador (codeload.github.com) superara el timeout
+# de 60s en redes de tienda mas lentas, tumbando la autoactualizacion.
+BackendInventario/src/static/descargas/
+
 # Logs
 **/logs/
 **/*.log

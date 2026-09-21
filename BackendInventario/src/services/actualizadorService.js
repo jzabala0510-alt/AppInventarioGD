@@ -26,6 +26,15 @@ const RUTAS_PROTEGIDAS = [
   'src/data',
   'src/resources/passbd.json',
   'node_modules',
+  // Sesiones de verificacion de conteo contra factura (telestockSesionService.js)
+  // y los StockMov.txt que ya se generaron -- son datos propios de esta
+  // instalacion, no algo que venga en el repo.
+  'data',
+  'TeleStock',
+  // APKs servidos por /descargas (ver app.js) -- viven en el disco de cada
+  // instalacion, no en el repo (ver .gitignore). Si alguna vez volvieran a
+  // aparecer en un zip descargado, no se tocan.
+  'src/static/descargas',
 ];
 
 function repoConfigurado() {
