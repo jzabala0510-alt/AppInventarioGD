@@ -12,6 +12,7 @@ const auth = useAuthStore();
 
 const TODOS_LOS_ITEMS = [
   { name: 'inicio', label: 'Conteos', requiereSesion: true },
+  { name: 'telestock', label: 'Verificar factura', requiereSesion: true },
   { name: 'configuracion', label: 'Configuración', requiereSesion: false },
   { name: 'actualizador', label: 'Actualizador', requiereSesion: true },
 ];

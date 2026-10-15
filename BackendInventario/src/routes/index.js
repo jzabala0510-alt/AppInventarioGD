@@ -9,6 +9,7 @@ import { sqlRouter } from './sql.js';
 import { ordenRouter } from './orden.js';
 import { utilRouter } from './util.js';
 import { actualizadorRouter } from './actualizador.js';
+import { telestockRouter } from './telestock.js';
 
 export const router = Router();
 
@@ -22,3 +23,4 @@ router.use(sqlRouter);
 router.use(ordenRouter);
 router.use(utilRouter);
 router.use(actualizadorRouter);
+router.use(telestockRouter);

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { apiConfig, actualizarApiBaseUrl, restablecerApiBaseUrl, esConfiguracionPersonalizada } from '../services/apiConfig';
 import { api } from '../services/api';
 import * as sqlConfigService from '../services/sqlConfig';
+import * as telestockService from '../services/telestock';
 import Spinner from '../components/Spinner.vue';
 
 const route = useRoute();
@@ -115,6 +116,55 @@ async function probarConexionBD() {
   }
 }
 
+const formularioLibRemote = ref({ baseUrl: '', usuario: '', password: '' });
+const hayPasswordGuardadaLibRemote = ref(false);
+const cargandoLibRemote = ref(true);
+const probandoLibRemote = ref(false);
+const guardandoLibRemote = ref(false);
+const resultadoPruebaLibRemote = ref(null);
+const resultadoGuardarLibRemote = ref(null);
+
+onMounted(async () => {
+  try {
+    const actual = await telestockService.obtenerConfiguracion();
+    formularioLibRemote.value = { baseUrl: actual.baseUrl, usuario: actual.usuario, password: '' };
+    hayPasswordGuardadaLibRemote.value = actual.hayPasswordGuardada;
+  } catch {
+    // Sin bloquear el resto de la pantalla -- si esto falla es el mismo caso
+    // de "no se pudo contactar al backend" que ya cubre la seccion de BD.
+  } finally {
+    cargandoLibRemote.value = false;
+  }
+});
+
+async function probarLibRemote() {
+  probandoLibRemote.value = true;
+  resultadoPruebaLibRemote.value = null;
+  try {
+    const respuesta = await telestockService.probarConfiguracion(formularioLibRemote.value);
+    resultadoPruebaLibRemote.value = { ok: respuesta.ok, mensaje: respuesta.mensaje };
+  } catch (err) {
+    resultadoPruebaLibRemote.value = { ok: false, mensaje: telestockService.mensajeError(err) };
+  } finally {
+    probandoLibRemote.value = false;
+  }
+}
+
+async function guardarLibRemote() {
+  guardandoLibRemote.value = true;
+  resultadoGuardarLibRemote.value = null;
+  try {
+    const respuesta = await telestockService.guardarConfiguracion(formularioLibRemote.value);
+    resultadoGuardarLibRemote.value = { ok: true, mensaje: respuesta.mensaje };
+    hayPasswordGuardadaLibRemote.value = hayPasswordGuardadaLibRemote.value || Boolean(formularioLibRemote.value.password);
+    formularioLibRemote.value.password = '';
+  } catch (err) {
+    resultadoGuardarLibRemote.value = { ok: false, mensaje: telestockService.mensajeError(err) };
+  } finally {
+    guardandoLibRemote.value = false;
+  }
+}
+
 async function guardarBD() {
   guardandoBD.value = true;
   resultadoGuardarBD.value = null;
@@ -156,6 +206,8 @@ async function guardarBD() {
       No se pudo conectar con el servidor. Configura la base de datos aquí abajo.
     </div>
 
+    <div class="columnas">
+    <div class="columna-izquierda">
     <template v-if="mostrarSeccionApi">
     <h2 class="section-title">Conexión de la aplicación</h2>
     <div class="card config-card">
@@ -262,6 +314,66 @@ async function guardarBD() {
         {{ resultadoGuardarBD.mensaje }}
       </p>
     </form>
+    </div>
+
+    <div class="columna-derecha">
+    <h2 class="section-title">LibRemote (verificación de conteo contra factura)</h2>
+    <div v-if="cargandoLibRemote" class="empty-state"><Spinner /></div>
+    <form v-else class="card config-card" @submit.prevent="guardarLibRemote">
+      <p class="ayuda">
+        Servicio SOAP de ICG Manager que usa la pantalla "Verificar factura" para traer las facturas de venta
+        pendientes y sus líneas.
+      </p>
+
+      <div class="field">
+        <label for="lrUrl">URL base</label>
+        <input
+          id="lrUrl"
+          v-model="formularioLibRemote.baseUrl"
+          type="text"
+          class="input"
+          placeholder="https://tu-servidor-icg:puerto"
+          required
+        />
+      </div>
+
+      <div class="fila-bd">
+        <div class="field">
+          <label for="lrUsuario">Usuario</label>
+          <input id="lrUsuario" v-model="formularioLibRemote.usuario" type="text" class="input" required />
+        </div>
+        <div class="field">
+          <label for="lrPassword">Contraseña</label>
+          <input
+            id="lrPassword"
+            v-model="formularioLibRemote.password"
+            type="password"
+            class="input"
+            :placeholder="hayPasswordGuardadaLibRemote ? '(sin cambios)' : ''"
+          />
+        </div>
+      </div>
+
+      <div class="acciones">
+        <button type="button" class="btn" :disabled="probandoLibRemote" @click="probarLibRemote">
+          <Spinner v-if="probandoLibRemote" :size="14" />
+          <span>{{ probandoLibRemote ? 'Probando…' : 'Probar conexión' }}</span>
+        </button>
+        <button type="submit" class="btn btn-primary" :disabled="guardandoLibRemote">
+          <Spinner v-if="guardandoLibRemote" :size="14" />
+          <span>{{ guardandoLibRemote ? 'Guardando…' : 'Guardar' }}</span>
+        </button>
+      </div>
+
+      <p v-if="resultadoPruebaLibRemote" :class="resultadoPruebaLibRemote.ok ? 'resultado-ok' : 'login-error'">
+        {{ resultadoPruebaLibRemote.mensaje }}
+      </p>
+      <p v-if="resultadoGuardarLibRemote" :class="resultadoGuardarLibRemote.ok ? 'resultado-ok' : 'login-error'">
+        {{ resultadoGuardarLibRemote.mensaje }}
+      </p>
+    </form>
+    </div>
+    </div>
   </div>
 </template>
 
@@ -273,6 +385,24 @@ async function guardarBD() {
   padding: 10px 14px;
   font-size: 14px;
   margin-bottom: 1rem;
+}
+
+.columnas {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* flex-basis chico a proposito: las tarjetas de adentro ya se limitan solas a
+   560px (ver .config-card) -- esto solo evita que ambas columnas compitan
+   por 560px cada una y se manden a la fila de abajo antes de tiempo. Con un
+   basis bajo, ocupan lo que el flex les reparte (~50% del ancho disponible)
+   y solo bajan a una columna cuando de verdad no entran (pantallas angostas). */
+.columna-izquierda,
+.columna-derecha {
+  flex: 1 1 360px;
+  min-width: 320px;
 }
 
 .section-title {

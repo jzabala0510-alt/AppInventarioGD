@@ -38,4 +38,13 @@ export const config = {
     repoName: process.env.UPDATER_REPO_NAME || null,
     rama: process.env.UPDATER_REPO_BRANCH || 'main',
   },
+  // Servicio SOAP SvcRemote de ICG Manager (LibRemote) -- factura de venta y
+  // sus lineas, para la pantalla de verificacion de conteo. Sin configurar,
+  // el modulo simplemente responde que no esta disponible (no rompe el
+  // arranque, igual que actualizador).
+  libRemote: {
+    baseUrl: process.env.LIBREMOTE_BASE_URL || null,
+    usuario: process.env.LIBREMOTE_USUARIO || null,
+    password: process.env.LIBREMOTE_PASSWORD || null,
+  },
 };

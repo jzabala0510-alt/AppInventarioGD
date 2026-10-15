@@ -49,6 +49,17 @@ const routes = [
         component: () => import('../views/DetalleArticuloView.vue'),
         props: (route) => ({ id: Number(route.params.id), ...route.query }),
       },
+      {
+        path: 'telestock',
+        name: 'telestock',
+        component: () => import('../views/TelestockFacturasView.vue'),
+      },
+      {
+        path: 'telestock/:idSesion',
+        name: 'telestock-verificar',
+        component: () => import('../views/TelestockVerificarView.vue'),
+        props: true,
+      },
     ],
   },
 ];

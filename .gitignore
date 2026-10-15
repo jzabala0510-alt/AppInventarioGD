@@ -37,3 +37,9 @@ InventarioWebVue/dist-ssr/
 *.njsproj
 *.sln
 *.sw?
+
+# Muestras REALES de LibRemote (clientes y facturas de produccion) usadas por
+# test-fixtures/libRemote/validar*.js -- el repo es publico, no se suben.
+# Los scripts de validacion se omiten solos si no estan.
+BackendInventario/test-fixtures/libRemote/*.txt
+BackendInventario/test-fixtures/libRemote/*.bin
