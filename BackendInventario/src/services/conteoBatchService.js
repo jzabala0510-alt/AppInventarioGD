@@ -37,6 +37,37 @@ export function calcularAjusteReloj(fecha, ahoraMs = Date.now(), limiteSegundos 
   return Number.isFinite(segundosCrudo) && Math.abs(segundosCrudo) <= limiteSegundos ? segundosCrudo : 0;
 }
 
+// Hora del escaneo lista para guardar en HORACONTEO, como texto
+// 'YYYY-MM-DDTHH:mm:ss.SSS' (estilo 126 de CONVERT) en hora local de pared.
+//
+// Bug real (confirmado 15-oct-2026 contra rip.CONTEOLIN/rip.CONTEO_ENVIOS):
+// el celular manda la hora local SIN zona (LocalDateTime.now().toString(),
+// ej. "2026-07-22T14:54:11.517"). Antes se hacia new Date(...) y se pasaba
+// como sql.DateTime -- mssql (useUTC=true por defecto) la escribia en UTC,
+// asi que en la BD quedaba 4 horas adelantada respecto a Venezuela, y
+// APP_CONTEO_GETCONTEO contaba como "Vendidas" ventas de las 4 horas
+// siguientes al conteo. Las lineas en vivo (GETDATE()) nunca tuvieron el
+// problema. NO se arregla con useUTC=false global: eso corre un dia las
+// fechas que llegan como 'YYYY-MM-DD' (sql.Date), probado.
+//
+// La suma del ajuste de reloj se hace con Date.UTC/getUTC* para que la zona
+// horaria del servidor nunca entre en la cuenta.
+export function horaConteoParaSql(valor, segundosAjuste = 0) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/.exec(String(valor ?? '').trim());
+  let ms;
+  if (m) {
+    const [, anio, mes, dia, hora, minuto, segundo = '0', fraccion = '0'] = m;
+    ms = Date.UTC(+anio, +mes - 1, +dia, +hora, +minuto, +segundo, parseInt(fraccion.padEnd(3, '0').slice(0, 3), 10));
+  } else {
+    // Formato inesperado con zona explicita (ej. "...Z" o "-04:00"): es un
+    // instante absoluto, se expresa en la hora local de este servidor.
+    const t = new Date(valor).getTime();
+    if (!Number.isFinite(t)) throw new Error(`Hora de conteo invalida: ${valor}`);
+    ms = t - new Date(t).getTimezoneOffset() * 60000;
+  }
+  return new Date(ms + segundosAjuste * 1000).toISOString().slice(0, 23);
+}
+
 // Reconstruccion de mejor esfuerzo: el mapeo de resultset de
 // Articulo.buscarCodigo() se perdio en la descompilacion (JD-GUI no reconstruyo
 // esa seccion del bytecode). Las columnas de salida del SP si estan confirmadas
@@ -197,7 +228,7 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
   await transaction.begin();
   try {
     for (const linea of lineas) {
-      const horaAjustada = new Date(new Date(linea.horaConteo).getTime() + segundos * 1000);
+      const horaAjustada = horaConteoParaSql(linea.horaConteo, segundos);
       await new sql.Request(transaction)
         .input('fecha', sql.Date, linea.fecha)
         .input('codAlmacen', sql.NVarChar(3), linea.codAlmacen)
@@ -205,7 +236,7 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
         .input('color', sql.NVarChar(10), linea.color)
         .input('talla', sql.NVarChar(10), linea.talla)
         .input('unidades', sql.Float, linea.unidades)
-        .input('horaConteo', sql.DateTime, horaAjustada)
+        .input('horaConteo', sql.VarChar(23), horaAjustada)
         .input('zona', sql.NVarChar(50), String(linea.zona || '').substring(0, 50))
         .input('codUsuario', sql.Int, linea.codUsuario)
         .input('sector', sql.Int, linea.sector)
@@ -213,7 +244,7 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
         .input('codConcepto', sql.Int, linea.codConcepto)
         .query(`
           INSERT INTO rip.CONTEOLIN(FECHA, CODALMACEN, CODARTICULO, COLOR, TALLA, UNIDADES, HORACONTEO, ZONA, CODUSUARIO, SECTOR, UNIDADESREALES, IDENVIO, CODCONCEPTO)
-          VALUES (@fecha, @codAlmacen, @codArticulo, @color, @talla, @unidades, @horaConteo, @zona, @codUsuario, @sector, @unidades, @idEnvio, @codConcepto)
+          VALUES (@fecha, @codAlmacen, @codArticulo, @color, @talla, @unidades, CONVERT(DATETIME, @horaConteo, 126), @zona, @codUsuario, @sector, @unidades, @idEnvio, @codConcepto)
         `);
     }
 

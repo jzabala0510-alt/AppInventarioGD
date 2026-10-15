@@ -58,7 +58,10 @@ function formatearHora(valor) {
   if (!valor) return '';
   const fecha = new Date(valor);
   if (Number.isNaN(fecha.getTime())) return '';
-  return fecha.toLocaleTimeString('es-VE');
+  // HORACONTEO guarda la hora local de la tienda, pero el driver mssql la
+  // entrega con "Z" como si fuera UTC. Formatear en UTC muestra exactamente
+  // la hora guardada; con la zona del navegador se le restaban 4 horas.
+  return fecha.toLocaleTimeString('es-VE', { timeZone: 'UTC' });
 }
 
 function empezarEdicion(linea) {

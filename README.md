@@ -110,6 +110,22 @@ venta contra la hora en que se contó, de forma que solo cuenta como
 Es intencional que salga 0 cuando la venta ocurrió antes de contar el
 artículo.
 
+Como ese cálculo depende de la hora, `HORACONTEO` siempre se guarda en
+**hora local de la tienda** (Venezuela), igual que `GETDATE()`:
+
+- Escaneo en vivo (`/conteo/agregarArticulo`): la pone el propio SQL con `GETDATE()`.
+- Lote offline (`/conteo/agregarArticuloBatch`): el celular manda su hora local
+  sin zona (`LocalDateTime`), y `horaConteoParaSql()` la pasa a SQL como
+  texto (`CONVERT(DATETIME, …, 126)`), sin convertirla nunca a `Date` de JS.
+  Antes se guardaba en UTC (4 horas adelantada) porque `mssql` usa
+  `useUTC: true` por defecto. **No** se debe cambiar `useUTC` a `false` en
+  todo el pool: eso corre un día las fechas `'YYYY-MM-DD'`.
+- Al mostrarla, el frontend la formatea con `timeZone: 'UTC'`, porque el
+  driver la entrega con `Z` aunque sea hora local.
+
+Validación: `node test-fixtures/conteo/validar_hora_lote.js` y
+`node test-fixtures/conteo/validar_ajuste_reloj.js` (desde `BackendInventario/`).
+
 ### Órdenes de reposición
 
 Archivos: [`routes/orden.js`](BackendInventario/src/routes/orden.js),
