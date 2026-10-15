@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { nextTick, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { apiConfig, actualizarApiBaseUrl, restablecerApiBaseUrl, esConfiguracionPersonalizada } from '../services/apiConfig';
 import { api } from '../services/api';
@@ -128,6 +128,7 @@ const resultadoDetectarLibRemote = ref(null);
 // La contrasena detectada nunca llega al navegador: el backend la recuerda
 // y la usa si se prueba/guarda con el campo vacio y el mismo usuario.
 const passwordDesdeCentrales = ref(false);
+const campoUrlLibRemote = ref(null);
 
 onMounted(async () => {
   try {
@@ -173,6 +174,14 @@ async function detectarLibRemote() {
     if (datos?.baseUrl) {
       formularioLibRemote.value = { baseUrl: datos.baseUrl, usuario: datos.usuario, password: '' };
       passwordDesdeCentrales.value = true;
+      // Puerto invalido en CENTRALES: la URL llega como "http://ip:" -- se deja
+      // el cursor al final para escribir solo el puerto.
+      if (datos.faltaPuerto) {
+        await nextTick();
+        const campo = campoUrlLibRemote.value;
+        campo?.focus();
+        campo?.setSelectionRange(campo.value.length, campo.value.length);
+      }
     }
     resultadoDetectarLibRemote.value = { ok: false, mensaje: telestockService.mensajeError(err) };
   } finally {
@@ -372,6 +381,7 @@ async function guardarBD() {
         <label for="lrUrl">URL base</label>
         <input
           id="lrUrl"
+          ref="campoUrlLibRemote"
           v-model="formularioLibRemote.baseUrl"
           type="text"
           class="input"

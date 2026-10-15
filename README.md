@@ -196,7 +196,10 @@ configurada la app ([`services/libRemote/centralesService.js`](BackendInventario
 - La contraseña de `CENTRALES` nunca se envía al navegador y se guarda
   cifrada en `data/libRemoteConfig.json`, igual que la manual.
 - Se valida que `PUERTO` esté entre 1 y 65535. Ya se vio una base de prueba
-  con `94000`, que no es un puerto válido.
+  con `94000`, que no es un puerto válido. En ese caso no se guarda nada, pero
+  **Detectar automáticamente** carga igual la IP y el usuario (`http://ip:`)
+  con el cursor al final de la URL: basta con escribir el puerto correcto y
+  guardar, y la contraseña se toma de `CENTRALES` aunque el campo quede vacío.
 
 Validación: `node test-fixtures/libRemote/validar_centrales.js` (desde `BackendInventario/`).
 
