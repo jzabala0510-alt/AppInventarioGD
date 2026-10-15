@@ -272,8 +272,11 @@ ENCRYPTION`.
 
 Esto se ejecuta automáticamente, sin intervención manual, en dos momentos:
 
-- **Al arrancar el backend** (`server.js`), si hay una base de datos
-  configurada y alcanzable.
+- **Al arrancar el backend** (`server.js`). Si en ese momento la base de
+  datos no responde (o todavía no está configurada), se reintenta solo en
+  segundo plano (5 s, 15 s, 30 s, 1 min, 2 min y luego cada 5 min) hasta
+  lograrlo una vez; `logs/backend.log` registra el fallo y luego en qué
+  intento se logró. Nunca corren dos ejecuciones del script a la vez.
 - **Al guardar una conexión** válida desde Configuración > Base de datos
   (`sqlConfigService.js`).
 
