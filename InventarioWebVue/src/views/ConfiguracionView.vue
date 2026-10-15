@@ -123,6 +123,11 @@ const probandoLibRemote = ref(false);
 const guardandoLibRemote = ref(false);
 const resultadoPruebaLibRemote = ref(null);
 const resultadoGuardarLibRemote = ref(null);
+const detectandoLibRemote = ref(false);
+const resultadoDetectarLibRemote = ref(null);
+// La contrasena detectada nunca llega al navegador: el backend la recuerda
+// y la usa si se prueba/guarda con el campo vacio y el mismo usuario.
+const passwordDesdeCentrales = ref(false);
 
 onMounted(async () => {
   try {
@@ -150,13 +155,40 @@ async function probarLibRemote() {
   }
 }
 
+async function detectarLibRemote() {
+  detectandoLibRemote.value = true;
+  resultadoDetectarLibRemote.value = null;
+  resultadoPruebaLibRemote.value = null;
+  resultadoGuardarLibRemote.value = null;
+  try {
+    const respuesta = await telestockService.detectarConfiguracion();
+    formularioLibRemote.value = { baseUrl: respuesta.baseUrl, usuario: respuesta.usuario, password: '' };
+    hayPasswordGuardadaLibRemote.value = true;
+    passwordDesdeCentrales.value = false;
+    resultadoDetectarLibRemote.value = { ok: true, mensaje: respuesta.mensaje };
+  } catch (err) {
+    const datos = err.response?.data;
+    // Se encontro la central pero la prueba fallo: se cargan los datos en el
+    // formulario para poder corregirlos (p. ej. el puerto) y guardar.
+    if (datos?.baseUrl) {
+      formularioLibRemote.value = { baseUrl: datos.baseUrl, usuario: datos.usuario, password: '' };
+      passwordDesdeCentrales.value = true;
+    }
+    resultadoDetectarLibRemote.value = { ok: false, mensaje: telestockService.mensajeError(err) };
+  } finally {
+    detectandoLibRemote.value = false;
+  }
+}
+
 async function guardarLibRemote() {
   guardandoLibRemote.value = true;
   resultadoGuardarLibRemote.value = null;
   try {
     const respuesta = await telestockService.guardarConfiguracion(formularioLibRemote.value);
     resultadoGuardarLibRemote.value = { ok: true, mensaje: respuesta.mensaje };
-    hayPasswordGuardadaLibRemote.value = hayPasswordGuardadaLibRemote.value || Boolean(formularioLibRemote.value.password);
+    hayPasswordGuardadaLibRemote.value =
+      hayPasswordGuardadaLibRemote.value || passwordDesdeCentrales.value || Boolean(formularioLibRemote.value.password);
+    passwordDesdeCentrales.value = false;
     formularioLibRemote.value.password = '';
   } catch (err) {
     resultadoGuardarLibRemote.value = { ok: false, mensaje: telestockService.mensajeError(err) };
@@ -325,6 +357,17 @@ async function guardarBD() {
         pendientes y sus líneas.
       </p>
 
+      <div class="detectar">
+        <button type="button" class="btn" :disabled="detectandoLibRemote" @click="detectarLibRemote">
+          <Spinner v-if="detectandoLibRemote" :size="14" />
+          <span>{{ detectandoLibRemote ? 'Detectando…' : 'Detectar automáticamente' }}</span>
+        </button>
+        <span class="ayuda">Usa la central 1 de ICGFRONT (tabla CENTRALES).</span>
+      </div>
+      <p v-if="resultadoDetectarLibRemote" :class="resultadoDetectarLibRemote.ok ? 'resultado-ok' : 'login-error'">
+        {{ resultadoDetectarLibRemote.mensaje }}
+      </p>
+
       <div class="field">
         <label for="lrUrl">URL base</label>
         <input
@@ -349,7 +392,7 @@ async function guardarBD() {
             v-model="formularioLibRemote.password"
             type="password"
             class="input"
-            :placeholder="hayPasswordGuardadaLibRemote ? '(sin cambios)' : ''"
+            :placeholder="passwordDesdeCentrales ? '(la de CENTRALES)' : hayPasswordGuardadaLibRemote ? '(sin cambios)' : ''"
           />
         </div>
       </div>
@@ -463,6 +506,17 @@ async function guardarBD() {
   padding: 0 10px;
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.detectar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detectar .ayuda {
+  margin: 0;
 }
 
 .acciones {

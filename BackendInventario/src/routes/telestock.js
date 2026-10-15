@@ -3,6 +3,7 @@ import * as albVentaService from '../services/libRemote/albVentaService.js';
 import * as sesionService from '../services/telestockSesionService.js';
 import * as libRemoteConfigStore from '../services/libRemote/configStore.js';
 import { probarCredenciales } from '../services/libRemote/soapClient.js';
+import * as centralesService from '../services/libRemote/centralesService.js';
 
 export const telestockRouter = Router();
 
@@ -23,8 +24,11 @@ function responderError(res, err) {
 // Estado del modulo: informa si LibRemote esta configurado, para que el
 // frontend pueda mostrar un mensaje claro en vez de que todo falle en
 // silencio (mismo patron que /actualizador/estado).
-telestockRouter.get('/telestock/estado', (req, res) => {
-  res.json({ configurado: albVentaService.libRemoteConfigurado() });
+// Si todavia no hay nada configurado, intenta configurarlo solo desde
+// ICGFRONT.dbo.CENTRALES (ver centralesService.js) antes de responder.
+telestockRouter.get('/telestock/estado', async (req, res) => {
+  const { configurado, mensaje } = await centralesService.asegurarConfiguracionAutomatica();
+  res.json({ configurado, mensaje });
 });
 
 // Configuracion editable desde la app (Configuracion > LibRemote) -- nunca
@@ -45,7 +49,7 @@ telestockRouter.post('/telestock/configuracion/probar', async (req, res, next) =
     const activa = libRemoteConfigStore.getConfigActiva();
     // password vacio -- probar con la ya guardada (si el usuario solo
     // cambio la URL, no tiene por que retipear la contrasena para probar).
-    const passwordAUsar = password || activa?.password || '';
+    const passwordAUsar = password || activa?.password || centralesService.passwordDetectadaPara(usuario);
     const resultado = await probarCredenciales({ baseUrl, usuario, password: passwordAUsar });
     res.json(resultado);
   } catch (err) {
@@ -60,13 +64,26 @@ telestockRouter.post('/telestock/configuracion', async (req, res, next) => {
       return res.status(400).json({ error: 'baseUrl y usuario son obligatorios' });
     }
     const activa = libRemoteConfigStore.getConfigActiva();
-    const passwordAUsar = password || activa?.password || '';
+    const passwordAUsar = password || activa?.password || centralesService.passwordDetectadaPara(usuario);
     const resultado = await probarCredenciales({ baseUrl, usuario, password: passwordAUsar });
     if (!resultado.ok) {
       return res.status(422).json({ error: resultado.mensaje });
     }
-    libRemoteConfigStore.actualizarConfig({ baseUrl, usuario, password });
+    libRemoteConfigStore.actualizarConfig({ baseUrl, usuario, password: passwordAUsar });
     res.json({ guardado: true, mensaje: resultado.mensaje });
+  } catch (err) {
+    if (!responderError(res, err)) next(err);
+  }
+});
+
+// Boton "Detectar automáticamente" de Configuracion > LibRemote: lee la
+// central 1 de ICGFRONT.dbo.CENTRALES, la prueba y la guarda si responde.
+// Si la prueba falla devuelve igual la URL/usuario detectados (nunca la
+// contrasena) para que se puedan corregir a mano en el formulario.
+telestockRouter.post('/telestock/configuracion/detectar', async (req, res, next) => {
+  try {
+    const resultado = await centralesService.detectarYGuardar();
+    res.status(resultado.ok ? 200 : 422).json({ ...resultado, error: resultado.ok ? undefined : resultado.mensaje });
   } catch (err) {
     if (!responderError(res, err)) next(err);
   }

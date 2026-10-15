@@ -130,7 +130,9 @@ function irASesion(sesion) {
       <p v-if="error" class="login-error">{{ error }}</p>
 
       <div v-if="estado && !estado.configurado" class="card aviso-config">
-        El módulo de verificación todavía no tiene configurado LibRemote.
+        El módulo de verificación todavía no tiene configurado LibRemote y no se pudo detectar
+        automáticamente desde la central de ICGFRONT.
+        <span v-if="estado.mensaje" class="detalle-deteccion">{{ estado.mensaje }}</span>
         <RouterLink :to="{ name: 'configuracion' }">Configurarlo</RouterLink>.
       </div>
 
@@ -209,6 +211,12 @@ function irASesion(sesion) {
 .aviso-config {
   padding: 1rem 1.25rem;
   color: var(--text-secondary);
+}
+
+.detalle-deteccion {
+  display: block;
+  margin: 0.5rem 0;
+  font-size: 0.9em;
 }
 
 .filtros {

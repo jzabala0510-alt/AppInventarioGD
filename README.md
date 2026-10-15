@@ -178,6 +178,28 @@ guarda en `TeleStock/StockMov-<fecha de la factura>/<serie>-<numero>/StockMov.tx
 (el nombre del archivo es fijo, exigido por ICG) y se ofrece también como
 descarga desde el navegador.
 
+**Conexión a LibRemote automática.** No hace falta escribirla a mano: se
+toma de la propia BD de ICG, de la central **`IDCENTRAL = 1`** de
+`ICGFRONT.dbo.CENTRALES` (`IP`, `PUERTO`, `USUARIO`, `PASSWORD`, `MODOHTTPS`
+para elegir http/https), con la conexión de base de datos que ya tiene
+configurada la app ([`services/libRemote/centralesService.js`](BackendInventario/src/services/libRemote/centralesService.js)).
+
+- Si LibRemote no está configurado, la pantalla "Verificar factura" lo
+  intenta sola al abrirse (`GET /telestock/estado`). Si falla, muestra el
+  motivo y no lo vuelve a intentar durante 1 minuto.
+- En Configuración > LibRemote, el botón **Detectar automáticamente**
+  (`POST /telestock/configuracion/detectar`) hace lo mismo a pedido.
+- Lo detectado siempre se **prueba** contra LibRemote antes de guardarse. Si
+  la prueba falla, la URL y el usuario quedan cargados en el formulario para
+  corregirlos (por ejemplo, el puerto) y guardar sin tener que conocer la
+  contraseña.
+- La contraseña de `CENTRALES` nunca se envía al navegador y se guarda
+  cifrada en `data/libRemoteConfig.json`, igual que la manual.
+- Se valida que `PUERTO` esté entre 1 y 65535. Ya se vio una base de prueba
+  con `94000`, que no es un puerto válido.
+
+Validación: `node test-fixtures/libRemote/validar_centrales.js` (desde `BackendInventario/`).
+
 Detalle completo del protocolo SOAP y del formato binario propietario que
 decodifica (`ClientDataSet`, reconstruido por ingeniería inversa) en
 [`services/libRemote/README.md`](BackendInventario/src/services/libRemote/README.md).

@@ -167,7 +167,7 @@ export async function invocarInformesGetAlbVentaCabNoRecibidos({ credencialesOve
  */
 export async function probarCredenciales({ baseUrl, usuario, password }) {
   if (!baseUrl || !usuario || !password) {
-    return { ok: false, mensaje: 'Completá URL, usuario y contraseña.' };
+    return { ok: false, mensaje: 'Completa la URL, el usuario y la contraseña.' };
   }
   try {
     const { errorMsg } = await invocarInformesGetAlbVentaCabNoRecibidos({

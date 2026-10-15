@@ -20,6 +20,13 @@ export async function guardarConfiguracion({ baseUrl, usuario, password }) {
   return data;
 }
 
+// Lee la central 1 de ICGFRONT.dbo.CENTRALES, la prueba y la guarda si
+// responde. Con 422 viene igual { baseUrl, usuario } detectados.
+export async function detectarConfiguracion() {
+  const { data } = await api.post('/telestock/configuracion/detectar', {});
+  return data;
+}
+
 export async function listarFacturas() {
   const { data } = await api.get('/telestock/facturas');
   return data;
