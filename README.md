@@ -110,6 +110,14 @@ venta contra la hora en que se contó, de forma que solo cuenta como
 Es intencional que salga 0 cuando la venta ocurrió antes de contar el
 artículo.
 
+**Crear un conteo** (`crearConteo`) escribe, en una sola transacción con
+`XACT_ABORT ON` (si algo falla no queda nada a medias): la cabecera en
+`rip.CONTEOCAB` (una por almacén y fecha; si ya existe responde `409` con un
+mensaje claro), el stock congelado del día anterior en `rip.CONTEOSTOCK` y los
+artículos del conteo en `rip.CONTEO_TARGET`. El `INSERT` a `rip.CONTEOSTOCK`
+nombra sus columnas: en bases donde corrió la versión de "Vendidas congelada"
+(revertida) la tabla quedó con una columna extra `VENDIDAS`, que se deja en `NULL`.
+
 Como ese cálculo depende de la hora, `HORACONTEO` siempre se guarda en
 **hora local de la tienda** (Venezuela), igual que `GETDATE()`:
 

@@ -73,6 +73,8 @@ conteoRouter.post('/conteo/crear', async (req, res, next) => {
     const { codAlmacen, fecha, observacion } = req.body;
     res.json(await conteoService.crearConteo({ fecha, codAlmacen, observacion, filtro: req.query }));
   } catch (err) {
+    // 409: ya existe un conteo para esa fecha y almacen (errorHandler siempre responde 500).
+    if (err.status === 409) return res.status(409).json({ success: false, respuesta: err.message });
     next(err);
   }
 });

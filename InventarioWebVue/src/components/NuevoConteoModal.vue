@@ -53,8 +53,10 @@ async function enviar() {
       observacion: observacion.value,
     });
     emit('creado');
-  } catch {
-    error.value = 'No se pudo crear el conteo';
+  } catch (err) {
+    // 409 = ya hay un conteo para ese almacen y fecha: el backend explica cual.
+    // Cualquier otro error trae detalles internos de SQL, no se muestran.
+    error.value = err.response?.status === 409 ? err.response.data.respuesta : 'No se pudo crear el conteo';
   } finally {
     enviando.value = false;
   }

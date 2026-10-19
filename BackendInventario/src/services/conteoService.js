@@ -786,9 +786,9 @@ export async function streamArticulosDeConteo(res, filtro = {}) {
   });
 }
 
-async function llenarConteoTarget(idConteo, codAlmacen, filtro) {
-  const pool = await getPool();
-  const request = pool.request();
+// Recibe el request de la transaccion de crearConteo: los articulos del conteo
+// se cargan en la misma transaccion que la cabecera y el stock.
+async function llenarConteoTarget(request, idConteo, codAlmacen, filtro) {
   request.input('idConteo', sql.Int, idConteo);
   request.input('codAlmacenStock', sql.NVarChar(3), codAlmacen);
   const where = buildFiltroWhere(request, filtro);
@@ -806,32 +806,62 @@ async function llenarConteoTarget(idConteo, codAlmacen, filtro) {
   `);
 }
 
+// Cabecera + stock congelado + articulos del conteo, todo o nada.
+//
+// Bug real (19-oct-2026): en bases donde corrio la version de "Vendidas
+// congelada" (commit 41183b6, revertido despues) rip.CONTEOSTOCK quedo con una
+// 7ma columna VENDIDAS, y el INSERT ... SELECT sin lista de columnas fallaba con
+// "Column name or number of supplied values does not match table definition"
+// (error de compilacion: el lote entero no corria). Aparte, sin transaccion un
+// error en tiempo de ejecucion SI dejaba cosas a medias: crear un conteo que ya
+// existia fallaba en la cabecera pero el lote seguia y borraba/recalculaba el
+// stock congelado del conteo existente (comprobado); y si fallaba la carga de
+// articulos quedaba una cabecera sin articulos. Ahora el INSERT nombra sus
+// columnas y todo corre en una transaccion con XACT_ABORT ON: cualquier error
+// la revierte completa.
 export async function crearConteo({ fecha, codAlmacen, observacion, filtro = {} }) {
   const pool = await getPool();
+  const transaction = new sql.Transaction(pool);
+  await transaction.begin();
+  try {
+    const cabResult = await new sql.Request(transaction)
+      .input('fecha', sql.Date, fecha)
+      .input('codAlmacen', sql.NVarChar(3), codAlmacen)
+      .input('observacion', sql.NVarChar(50), (observacion || '').trim().toUpperCase())
+      .input('tipoConteo', sql.Int, 1)
+      .query(`
+        SET XACT_ABORT ON;
 
-  await pool.request()
-    .input('fecha', sql.Date, fecha)
-    .input('codAlmacen', sql.NVarChar(3), codAlmacen)
-    .input('observacion', sql.NVarChar(50), (observacion || '').trim().toUpperCase())
-    .input('tipoConteo', sql.Int, 1)
-    .query(`
-      INSERT INTO rip.CONTEOCAB(FECHA, CODALMACEN, OBSERVACION, FECHAINICIO, IDCONTEO, IDTIPOCONTEO)
-      SELECT @fecha, @codAlmacen, @observacion, GETDATE(), ISNULL((SELECT MAX(IDCONTEO) FROM rip.CONTEOCAB WITH(NOLOCK)),0)+1, @tipoConteo;
+        -- UPDLOCK/HOLDLOCK: dos altas simultaneas no pueden leer el mismo MAX
+        -- y chocar en el indice unico de IDCONTEO.
+        DECLARE @idConteo INT = ISNULL((SELECT MAX(IDCONTEO) FROM rip.CONTEOCAB WITH(UPDLOCK, HOLDLOCK)), 0) + 1;
 
-      DELETE FROM rip.CONTEOSTOCK WHERE CODALMACEN=@codAlmacen AND FECHA=@fecha;
+        INSERT INTO rip.CONTEOCAB(FECHA, CODALMACEN, OBSERVACION, FECHAINICIO, IDCONTEO, IDTIPOCONTEO)
+        VALUES (@fecha, @codAlmacen, @observacion, GETDATE(), @idConteo, @tipoConteo);
 
-      INSERT INTO rip.CONTEOSTOCK
-      SELECT @codAlmacen, @fecha, CODARTICULO, COLOR, TALLA, STOCK
-      FROM rip.RIP_FSTOCK_ARTICULO_FECHA(DATEADD(DAY,-1,@fecha), @codAlmacen);
-    `);
+        DELETE FROM rip.CONTEOSTOCK WHERE CODALMACEN=@codAlmacen AND FECHA=@fecha;
 
-  const idResult = await pool.request()
-    .input('fecha', sql.Date, fecha)
-    .input('codAlmacen', sql.NVarChar(3), codAlmacen)
-    .query('SELECT IDCONTEO FROM rip.CONTEOCAB WHERE FECHA=@fecha AND CODALMACEN=@codAlmacen');
-  const idConteo = idResult.recordset[0]?.IDCONTEO;
+        INSERT INTO rip.CONTEOSTOCK(CODALMACEN, FECHA, CODARTICULO, COLOR, TALLA, STOCK)
+        SELECT @codAlmacen, @fecha, CODARTICULO, COLOR, TALLA, STOCK
+        FROM rip.RIP_FSTOCK_ARTICULO_FECHA(DATEADD(DAY,-1,@fecha), @codAlmacen);
 
-  await llenarConteoTarget(idConteo, codAlmacen, filtro);
+        SELECT @idConteo AS IDCONTEO;
+      `);
+    const idConteo = cabResult.recordset[0].IDCONTEO;
 
-  return { success: true, respuesta: 'Ok' };
+    await llenarConteoTarget(new sql.Request(transaction), idConteo, codAlmacen, filtro);
+
+    await transaction.commit();
+    return { success: true, respuesta: 'Ok' };
+  } catch (err) {
+    // Con XACT_ABORT SQL Server ya pudo haberla revertido: en ese caso rollback()
+    // falla y se ignora (lo importante es el error original).
+    await transaction.rollback().catch(() => {});
+    if (err.number === 2627 || err.number === 2601) {
+      const e = new Error(`Ya existe un conteo para el almacén ${codAlmacen} en la fecha ${fecha}.`);
+      e.status = 409;
+      throw e;
+    }
+    throw err;
+  }
 }
