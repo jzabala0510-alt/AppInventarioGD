@@ -1,5 +1,6 @@
 import zlib from 'node:zlib';
 import { getPool, sql } from '../db/pool.js';
+import { log } from '../utils/logger.js';
 
 // Ajuste de reloj del lote offline, usado por procesarBatch() mas abajo: el
 // original ataba esta correccion a "fecha" -- la hora que el propio
@@ -185,6 +186,16 @@ export async function agregarArticulo(conteoJson) {
 // procesando en otro hilo"). Jose confirmo (2026-07-17) implementar la logica
 // que tiene sentido: PREPROCESADO=0 significa libre para procesar, =1
 // significa que otro hilo ya lo esta procesando (lock optimista real).
+//
+// La marca se toma con un solo UPDATE condicionado (dos envios simultaneos con
+// el mismo ID no pueden tomarla los dos) y se libera ante cualquier fallo. Si
+// el proceso muere en medio (reinicio del servicio, corte de SQL), la marca
+// queda colgada y el celular recibiria este error en cada reintento: por eso
+// liberarEnviosColgados() se ejecuta al arrancar. Aun si dos procesaran a la
+// vez, el UPDATE final (WHERE PROCESADO=0) deja pasar solo a uno.
+
+// IDs que este proceso esta procesando ahora: la liberacion al arrancar no los toca.
+const enviosEnProceso = new Set();
 
 async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEsperadas, lineas }) {
   const acumulado = lineas.reduce((sum, l) => sum + Number(l.unidades), 0);
@@ -210,23 +221,34 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
     const hora = envio.HORAPROCESADO ? new Date(envio.HORAPROCESADO).toLocaleString('es-VE') : '';
     return { success: true, respuesta: `El identificador suministrado fue procesado el ${hora}.` };
   }
-  if (envio.PREPROCESADO) {
-    return { success: false, respuesta: 'El identificador se está procesando en otro hilo de ejecución.' };
-  }
+  const ocupado = { success: false, respuesta: 'El identificador se está procesando en otro hilo de ejecución.' };
+  if (envio.PREPROCESADO) return ocupado;
 
-  // Lock optimista: marcar preprocesado ANTES de insertar, para que un segundo
-  // intento concurrente con el mismo idEnvio lo encuentre tomado.
-  await pool.request()
+  // Lock optimista: marcar preprocesado ANTES de insertar, en un solo UPDATE
+  // condicionado, para que un segundo intento concurrente lo encuentre tomado.
+  const marca = await pool.request()
     .input('idEnvio', sql.UniqueIdentifier, idEnvio)
-    .query('UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=1 WHERE ID=@idEnvio');
+    .query('UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=1 WHERE ID=@idEnvio AND ISNULL(PREPROCESADO,0)=0 AND ISNULL(PROCESADO,0)=0');
+  if (marca.rowsAffected[0] === 0) return ocupado;
+  enviosEnProceso.add(String(idEnvio).toUpperCase());
 
+  try {
+    return await insertarLote(pool, { idEnvio, fecha, codUsuario, codConteo, acumulado, lineas });
+  } finally {
+    enviosEnProceso.delete(String(idEnvio).toUpperCase());
+  }
+}
+
+async function insertarLote(pool, { idEnvio, fecha, codUsuario, codConteo, acumulado, lineas }) {
   // Ajuste de reloj del lote (ver detalle junto a calcularAjusteReloj, mas
   // arriba en este archivo).
   const segundos = calcularAjusteReloj(fecha);
 
   const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  let iniciada = false;
   try {
+    await transaction.begin();
+    iniciada = true;
     for (const linea of lineas) {
       const horaAjustada = horaConteoParaSql(linea.horaConteo, segundos);
       await new sql.Request(transaction)
@@ -266,13 +288,60 @@ async function procesarBatch({ idEnvio, fecha, codUsuario, codConteo, unidadesEs
     await transaction.commit();
     return { success: true, respuesta: 'OK' };
   } catch (err) {
-    await transaction.rollback();
-    // Libera el lock optimista para permitir un reintento si esto fallo.
-    await pool.request()
-      .input('idEnvio', sql.UniqueIdentifier, idEnvio)
-      .query('UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=0 WHERE ID=@idEnvio');
+    // El rollback puede fallar si la conexion se corto o SQL ya aborto la
+    // transaccion; aun asi hay que liberar la marca.
+    if (iniciada) {
+      try { await transaction.rollback(); } catch { /* ya no habia transaccion abierta */ }
+    }
+    // Libera el lock optimista para permitir un reintento si esto fallo. Si
+    // tampoco se puede (SQL caido), queda para liberarEnviosColgados().
+    try {
+      await pool.request()
+        .input('idEnvio', sql.UniqueIdentifier, idEnvio)
+        .query('UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=0 WHERE ID=@idEnvio AND ISNULL(PROCESADO,0)=0');
+    } catch (errLiberar) {
+      log(`No se pudo liberar la marca del envio ${idEnvio}: ${errLiberar.message}`);
+    }
     return { success: false, respuesta: err.message };
   }
+}
+
+// Libera los envios marcados como "procesando" que nunca terminaron (el proceso
+// murio en medio) y que no tienen lineas guardadas. Se llama al arrancar el
+// servicio; no toca los que este mismo proceso esta procesando en este momento.
+//
+// Primero se listan los candidatos saltando las filas bloqueadas (READPAST: un
+// envio en curso tiene su fila de CONTEO_ENVIOS y sus lineas bloqueadas por la
+// transaccion) y despues se libera cada uno por su ID. Un solo UPDATE que
+// recorriera las dos tablas se cruzaba con un envio en curso y SQL Server
+// cancelaba a uno de los dos por deadlock (visto en la prueba).
+export async function liberarEnviosColgados() {
+  const pool = await getPool();
+  const candidatos = await pool.request().query(`
+    SELECT E.ID FROM rip.CONTEO_ENVIOS E WITH (READPAST)
+    WHERE E.PREPROCESADO=1 AND ISNULL(E.PROCESADO,0)=0
+      AND NOT EXISTS (SELECT 1 FROM rip.CONTEOLIN L WITH (READPAST) WHERE L.IDENVIO=E.ID)
+  `);
+  let liberados = 0;
+  for (const { ID } of candidatos.recordset) {
+    if (enviosEnProceso.has(String(ID).toUpperCase())) continue;
+    for (let intento = 1; ; intento++) {
+      try {
+        const r = await pool.request()
+          .input('idEnvio', sql.UniqueIdentifier, ID)
+          .query(`
+            UPDATE rip.CONTEO_ENVIOS SET PREPROCESADO=0
+            WHERE ID=@idEnvio AND PREPROCESADO=1 AND ISNULL(PROCESADO,0)=0
+              AND NOT EXISTS (SELECT 1 FROM rip.CONTEOLIN WHERE IDENVIO=@idEnvio)
+          `);
+        liberados += r.rowsAffected[0];
+        break;
+      } catch (err) {
+        if (err.number !== 1205 || intento >= 3) throw err; // 1205 = elegido victima de deadlock
+      }
+    }
+  }
+  return liberados;
 }
 
 async function procesarBatchDesdeJson(desconectado) {
